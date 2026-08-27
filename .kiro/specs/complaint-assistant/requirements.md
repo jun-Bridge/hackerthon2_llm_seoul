@@ -335,12 +335,20 @@ CREATE INDEX idx_bedrock_called ON bedrock_logs(called_at DESC);
 |---|---|---|
 | `sess:{session_id}` | 로그인 세션 — `user_id`·`school_id`·`role` | 로그아웃, TTL 만료 |
 | `draft:{draft_key}:owner` | 초안 소유자 `user_id` | 접수 완료, TTL 만료 |
+| `draft:{draft_key}:running` | 진행 중인 턴 표시 (`SET NX`) | 턴 종료 (실패해도) |
 
 **로그인 세션이 Redis에 있어서 새로고침해도 로그인이 유지된다.** 브라우저에는 HttpOnly
 쿠키로 세션 id만 있고, 어느 워커가 받든 같은 Redis를 보므로 결과가 같다.
 
 **`draft:{key}:owner`는 초안 소유권 검증용이다.** 이게 없으면 남의 `draft_key`를 아는 사람이
 그 대화를 읽고 이어 쓸 수 있다.
+
+**`draft:{key}:running`은 턴 중복을 막는다.** 응답이 오기 전에 또 보내면 Bedrock 호출이 둘 다
+돌고 대화 순서가 꼬인다. `SET NX`로 세워야 한다 — 워커가 여럿이라 "있는지 보고 세우기"로 하면
+두 워커가 동시에 통과한다.
+
+**세션 TTL은 요청마다 연장하고(sliding), 초안 TTL은 연장하지 않는다.** 민원을 길게 쓰는 도중
+로그아웃되면 안 되고, 미접수 초안은 버려도 되는 데이터라 오래 붙들 이유가 없다.
 
 ### 브라우저 — 화면에만 관련된 것
 

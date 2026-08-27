@@ -35,9 +35,17 @@ HTTP 경계로 옮긴 것이다. 기능 자체가 궁금하면 그쪽을 본다.
 다른 워커로 갈 때 로그인이 풀린다. Redis에 있으면 어느 워커가 받든 같고, 새로고침해도 유지된다.
 
 ```
-Redis   sess:{session_id}          → { user_id, school_id, role }   TTL 있음
-        draft:{draft_key}:owner    → user_id                        TTL 있음
+Redis   sess:{session_id}          → { user_id, school_id, role }
+        draft:{draft_key}:owner    → user_id
+        draft:{draft_key}:running  → 진행 중인 턴 표시 (SET NX)
 ```
+
+**세션 TTL은 요청마다 연장한다(sliding).** 고정 만료면 민원을 길게 쓰는 도중 로그아웃된다.
+활동이 있는 한 유지되고, 손을 놓으면 만료된다.
+
+**초안 TTL은 연장하지 않는다.** 발급 시점부터 고정이다. 미접수 초안은 버려도 되는 데이터라
+오래 붙들 이유가 없다. 만료된 키로 접근하면 **404 `DRAFT_NOT_FOUND`** —
+프론트는 이걸 받으면 새 초안을 시작한다.
 
 **`draft:{key}:owner`가 초안 소유권을 만든다.** `complaint_conversations`에 작성자 컬럼이 없어서
 이게 없으면 남의 `draft_key`를 아는 사람이 그 대화를 읽고 이어 쓸 수 있다.
@@ -73,7 +81,7 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 
 | HTTP | 언제 |
 |---|---|
-| 400 | 입력 형식 오류 (빈 값, 길이 초과) |
+| 400 | 입력 형식 오류 (빈 값, 길이 초과, 이메일 형식 아님, 비밀번호 규칙 위반) |
 | 401 | 로그인 안 됨 / 세션 만료 |
 | 403 | 로그인했으나 권한 없음 (학생이 관리자 API 호출 등) |
 | 404 | 없거나 볼 권한 없음 — **다른 학교 것도 404** (존재 여부를 흘리지 않는다) |
@@ -83,6 +91,21 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 
 프론트는 **`error.code`로 분기하고 `error.message`를 그대로 보여준다.**
 메시지 문구를 프론트가 만들지 않는다 — 문구가 두 곳에 흩어지면 관리가 안 된다.
+
+### 입력 검증
+
+서버가 정본이다. 프론트는 같은 규칙으로 미리 걸러 경험을 좋게 할 뿐이고, **막는 것은 서버다.**
+
+| 필드 | 규칙 |
+|---|---|
+| `email` | 형식 검사 + 등록된 도메인. 소문자로 정규화해 저장 |
+| `password` | 8자 이상 |
+| `admin_code` | 공백 제거 후 대조 |
+| `message` (초안) | 1자 이상, 2000자 이하 |
+| `reason` (보류) | 공백 제거 후 1자 이상 |
+| `content` (코멘트) | 공백 제거 후 1자 이상, 1000자 이하 |
+
+길이 상한은 요청 본문 크기 제한(413)과 별개다 — 여기 걸리면 400이다.
 
 ### 공통 타입
 
@@ -155,9 +178,9 @@ interface ConversationTurn {
 | 5 | `getMe` | `GET /auth/me` | `get_me` | 내 정보·역할 | `users` R · `schools` R |
 | 6 | `changePassword` | `PATCH /auth/password` | `change_password` | 비밀번호 변경 | `users` R/W |
 | 7 | `deleteAccount` | `DELETE /auth/me` | `delete_account` | 탈퇴 | `users` D · `complaints` W(SET NULL) |
-| 8 | `startDraft` | `POST /drafts` | `create_draft` | 작성용 키 발급 | — |
-| 9 | `sendMessage` | `POST /drafts/{k}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 |
-| 10 | `getDraftConversation` | `GET /drafts/{k}/conversation` | `get_draft_conversation` | 대화 복구 | `complaint_conversations` R |
+| 8 | `startDraft` | `POST /drafts` | `create_draft` | 작성용 키 발급 | Redis W |
+| 9 | `sendMessage` | `POST /drafts/{k}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 · `bedrock_logs` W · Redis R/W |
+| 10 | `getDraftConversation` | `GET /drafts/{k}/conversation` | `get_draft_conversation` | 대화 복구 | `complaint_conversations` R · Redis R |
 | 11 | `submitDraft` | `POST /drafts/{k}/submit` | `submit_draft` | **정식 접수** | `complaints` W · `complaint_conversations` W |
 | 12 | `listComplaints` | `GET /complaints` | `list_complaints` | 게시판 목록 | `complaints` R |
 | 13 | `getComplaint` | `GET /complaints/{id}` | `get_complaint` | 상세 (상태 안 바뀜) | `complaints` R · `complaint_comments` R |
@@ -380,7 +403,28 @@ def send_message(self, draft_key: str, student_message: str) -> dict:
 **미리보기가 뜬 뒤에도 같은 함수를 그대로 부른다.** "위치를 4층으로 바꿔줘"도 메시지다 —
 **수정 전용 API가 없다.** 대화가 곧 수정 수단이고, 새 결과가 이전 미리보기를 덮는다.
 
-**오류** `502 BEDROCK_ERROR` — 학생 발화는 ①에서 이미 저장됐으므로 다시 보내면 이어진다
+**한 초안에서 턴은 하나만 돈다.** 응답이 오기 전에 또 보내면 Bedrock 호출이 둘 다 돌고
+대화 순서가 꼬인다. Redis에 진행 표시를 세워 막는다.
+
+```python
+if not redis.set(f"draft:{draft_key}:running", "1", nx=True, ex=TURN_TTL):
+    raise Conflict("TURN_IN_PROGRESS", 409)
+try:
+    return service.send_message(draft_key, body.message)
+finally:
+    redis.delete(f"draft:{draft_key}:running")   # 실패로 끝나도 반드시 지운다
+```
+
+`nx=True`가 핵심이다 — 워커가 여럿이라 "있는지 보고 세우기"로 하면 두 워커가 동시에 통과한다.
+`SET NX`는 Redis가 원자적으로 처리해 하나만 성공한다. `ex`를 주는 이유는 워커가 죽어도
+표시가 영원히 남지 않게 하기 위해서다.
+
+**프론트는 응답이 올 때까지 입력창을 잠근다.** 409를 받을 일이 없어야 정상이고,
+받았다면 이중 클릭이나 재시도가 겹친 것이다.
+
+**오류**
+`409 TURN_IN_PROGRESS` — 이전 턴이 아직 돌고 있다
+`502 BEDROCK_ERROR` — 학생 발화는 ①에서 이미 저장됐으므로 다시 보내면 이어진다
 
 ---
 
@@ -392,6 +436,7 @@ export async function getDraftConversation(draftKey) { ... }   // → Conversati
 ```python
 @router.get("/drafts/{draft_key}/conversation")
 def get_draft_conversation(draft_key: str, user = Depends(current_user)) -> list[TurnOut]:
+    require_draft_owner(draft_key, user.id)    # 읽기도 소유권을 본다
     return db.get_conversation(draft_key)      # WHERE draft_key=? ORDER BY created_at
 ```
 
@@ -509,6 +554,9 @@ def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[T
 
 **학생이 상세를 열어도 상태가 안 바뀐다.** 확인 전환은 관리자 전용(#17)에서만 일어난다.
 
+**철회된 민원은 id로 직접 조회해도 404다.** 목록에서만 빼면 링크를 아는 사람에게는 계속 보인다.
+`db.get_complaint`이 `status <> '철회'`를 조건에 넣는다 — 목록·상세·원문·관리자 상세가 전부 같다.
+
 ---
 
 #### 15. `withdrawComplaint` — 철회
@@ -542,6 +590,18 @@ def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None:
 ### 2.4 관리자 — `api/admin.js` ↔ `routes/admin.py`
 
 이 절의 모든 함수는 `role == 'admin'`을 통과해야 한다. 학생이 부르면 **403**.
+
+**역할 경계 전체**
+
+| 묶음 | 학생 | 관리자 |
+|---|---|---|
+| 인증 #1~7 | ○ | ○ |
+| 초안·작성 #8~11 | ○ | **✗ 403** — 민원을 넣는 것은 학생의 일이다 |
+| 게시판 조회 #12~14 | ○ | ○ (같은 엔드포인트. 응답이 같으므로 나누지 않는다) |
+| 철회 #15 | 본인 것만 | ✗ 403 |
+| 관리자 #16~23 | **✗ 403** | ○ |
+
+관리자가 민원을 넣을 일이 생기면 학생 계정을 따로 쓴다. 한 계정이 두 역할을 겸하지 않는다.
 
 ---
 
@@ -880,6 +940,14 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 
 **API 라우터를 정적 파일보다 먼저 등록한다.** 순서가 바뀌면 `/api/...`가 정적 핸들러에 먹힌다.
 
+**프론트가 자체 라우팅을 쓴다면** `/board/12` 같은 주소에서 새로고침하면 404가 난다.
+서버에 그 경로의 파일이 없기 때문이다. `html=True`가 디렉토리마다 `index.html`을 찾아주지만
+없는 경로까지 덮지는 않는다. 둘 중 하나를 고른다.
+
+- **해시 라우팅**(`/#/board/12`) — 서버가 볼 일이 없다. 설정이 필요 없어 데모에 맞는다
+- **catch-all fallback** — 매칭 안 된 GET을 전부 `index.html`로 보낸다. API 경로는 이미
+  위에서 잡혔으므로 안전하다
+
 **커넥션 풀은 워커마다 따로다.** 풀 크기 × 워커 수가 PostgreSQL의 `max_connections`를
 넘지 않게 잡는다.
 
@@ -897,7 +965,6 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 - **폴링 주기** — "실시간 반영"을 새로고침으로 할지, 몇 초 간격 폴링으로 할지.
   SSE·WebSocket은 1차 범위 밖으로 본다
 - **`is_complete=true` 이후 재대화의 미리보기 교체** — 새 확정안이 이전 것을 덮는 게 맞는지
-- **비밀번호 정책** — 최소 길이 등. 400 응답 조건에 들어간다
 - **`send_message` 타임아웃** — Bedrock이 느릴 때 프론트가 얼마나 기다릴지
 - **워커 수와 커넥션 풀 크기** — LLM 호출이 수 초라 동시 사용자 수에 맞춰 정한다.
   EC2 인스턴스 크기, PostgreSQL `max_connections`와 함께 본다
