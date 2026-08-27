@@ -1,0 +1,33 @@
+# secrets
+.env
+.env.local
+.env.*.local
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# node
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# logs / tmp
+*.log
+.DS_Store
+
+# data
+*.sqlite
+*.db
+
+# 키·시크릿 (EC2 팀 키, Streamlit secrets)
+*.pem
+*.key
+.streamlit/secrets.toml
+.aws/
