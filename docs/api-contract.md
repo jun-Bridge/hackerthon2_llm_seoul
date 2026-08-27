@@ -314,8 +314,7 @@ export async function signup(email, password, adminCode = null) { ... }   // →
 ```python
 @router.post("/auth/signup", status_code=201)
 def signup(body: SignupIn, response: Response) -> SignupOut:
-    # 역할은 코드가 정한다. 클라이언트가 "나 교직원"이라고 주장할 방법이 없다
-    code = (body.admin_code or "").strip()
+    # 역할은 admin_code가 정한다 — 클라이언트가 "나 교직원"이라 주장할 방법이 없다
     if not code:
         role = "student"
         role = "admin"
@@ -840,21 +839,11 @@ interface BedrockLog {
 정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
 **대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
 
-> ### `bedrock_logs` 테이블  *(정본 스키마에 반영됨)*
+> **저장 범위** — 호출 시각 · 모델 id · 도구 호출 성사 여부 · 지연 · 토큰 · 오류.
+> **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
+> 익명성 관리 대상이 늘어난다.
 >
-> ```sql
-> CREATE TABLE bedrock_logs (
->     id SERIAL PRIMARY KEY,
->     school_id INTEGER,
->     called_at TIMESTAMPTZ DEFAULT NOW(),
->     model_id VARCHAR(128) NOT NULL,
->     is_complete BOOLEAN NOT NULL,
->     latency_ms INTEGER,
->     input_tokens INTEGER,
->     output_tokens INTEGER,
->     error TEXT
-> );
-> ```
+> 테이블 정의는 `.kiro` 스키마, 적재 시점은 `backend-design.md` §8.5.
 >
 > `BedrockClient.refine_complaint()`가 호출할 때마다 1행씩 남긴다.
 > **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 로그에 중복 보관되면
