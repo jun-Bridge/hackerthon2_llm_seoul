@@ -76,7 +76,7 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 모든 오류는 같은 모양이다.
 
 ```json
-{ "error": { "code": "COMPLAINT_NOT_CONFIRMED", "message": "먼저 상세를 열람해야 합니다." } }
+{ "error": { "code": "INVALID_TRANSITION", "message": "먼저 상세를 열람해야 합니다." } }
 ```
 
 | HTTP | 언제 |
@@ -91,6 +91,33 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 
 프론트는 **`error.code`로 분기하고 `error.message`를 그대로 보여준다.**
 메시지 문구를 프론트가 만들지 않는다 — 문구가 두 곳에 흩어지면 관리가 안 된다.
+
+### 오류 코드 전체
+
+프론트가 분기에 쓸 수 있는 코드는 이것뿐이다. **여기 없는 코드를 서버가 보내지 않는다.**
+
+| 코드 | HTTP | 언제 | 프론트가 할 일 |
+|---|---|---|---|
+| `UNSUPPORTED_DOMAIN` | 400 | 등록되지 않은 이메일 도메인 | 가입 버튼 비활성 + 안내 |
+| `EMAIL_TAKEN` | 409 | 이미 가입된 이메일 | 이메일 칸에 표시 |
+| `INVALID_ADMIN_CODE` | 400 | 관리자 코드 불일치 | 코드 칸에 표시 |
+| `VALIDATION_FAILED` | 400 | 형식·길이 규칙 위반 | 해당 입력칸에 표시 |
+| `INVALID_CREDENTIALS` | 401 | 로그인 실패 | 폼에 표시 (계정 존재 여부는 구분하지 않는다) |
+| `UNAUTHENTICATED` | 401 | 미로그인·세션 만료 | **`client.js`가 처리.** 로그인 화면으로 |
+| `WRONG_PASSWORD` | 401 | 비밀번호 재확인 실패 (변경·탈퇴·철회) | 비밀번호 칸에 표시 |
+| `FORBIDDEN_ROLE` | 403 | 역할에 없는 API 호출 | 일어나면 안 되는 일. 화면 분기 버그 |
+| `NOT_OWNER` | 403 | 내 것이 아닌 초안·민원 | 목록 새로고침 |
+| `NOT_FOUND` | 404 | 없거나 볼 권한 없음 (철회 포함) | 목록으로 돌려보냄 |
+| `DRAFT_NOT_FOUND` | 404 | 초안 TTL 만료 | 새 초안 시작 |
+| `DRAFT_NOT_COMPLETE` | 409 | 확정안 없이 접수 시도 | 접수 버튼을 감췄어야 한다 |
+| `TURN_IN_PROGRESS` | 409 | 이전 턴이 아직 진행 중 | 입력창을 잠갔어야 한다 |
+| `INVALID_TRANSITION` | 409 | 현재 상태에서 갈 수 없는 전이 | 상세를 다시 받아 버튼 재계산 |
+| `HOLD_REASON_REQUIRED` | 422 | 보류인데 사유가 비었다 | 모달에서 미리 막았어야 한다 |
+| `BEDROCK_ERROR` | 502 | 모델 호출 실패 | 재시도 버튼. 대화는 남아 있다 |
+
+**"일어나면 안 되는 일"로 적힌 것들**(`FORBIDDEN_ROLE`·`DRAFT_NOT_COMPLETE`·`TURN_IN_PROGRESS`·
+`HOLD_REASON_REQUIRED`)은 프론트가 이미 막았어야 하는 경우다.
+받았다면 화면 상태가 서버와 어긋난 것이므로, 조용히 삼키지 말고 상태를 다시 받아온다.
 
 ### 입력 검증
 
@@ -135,7 +162,7 @@ interface Complaint {
   created_at: string;
   confirmed_at: string | null;
   is_mine: boolean;         // 철회 버튼 노출 판단용. 서버가 세션과 대조해 계산
-  comments: Comment[];      // 상세에서만 채워짐. 목록에서는 []
+  comments: Comment[];      // ★ 목록과 상세에서 내용이 다르다 — 아래 참조
 }
 
 interface Comment {
@@ -155,6 +182,17 @@ interface ConversationTurn {
 
 > **`is_mine`을 서버가 계산하는 이유**: 익명 게시판이라 작성자 id를 내려보낼 수 없다.
 > 그렇다고 프론트가 판단할 근거도 없다. 서버만 아는 사실이므로 서버가 불린 하나로 답한다.
+
+> **`comments`는 어디서 왔느냐에 따라 내용이 다르다.**
+>
+> | 어디서 | 담기는 것 |
+> |---|---|
+> | 목록 (#12) | **보류 사유만** (`is_hold_reason=true`) |
+> | 상세 (#13 · #17) | **전부** |
+>
+> 목록에 전부 실으면 응답이 무거워지는데, 게시판 카드에 보류 사유는 보여야 해서(US-3.6)
+> 그것만 골라 싣는다. **타입이 같으므로 프론트가 헷갈리기 쉽다** — 카드에서 "코멘트 N개"를
+> 세면 안 된다. 개수는 상세를 열어야 정확하다.
 
 ---
 
@@ -260,7 +298,7 @@ def signup(body: SignupIn, response: Response) -> SignupOut:
 **하는 일** — `school_id`를 **요청에서 받지 않는다.** 이메일 도메인으로 서버가 정한다.
 같은 학교 이메일이라는 사실만으로 관리자가 되지는 못한다 — 코드가 따로 필요하다.
 
-**오류** `400 UNSUPPORTED_DOMAIN` · `400 EMAIL_TAKEN` · `400 INVALID_ADMIN_CODE`
+**오류** `400 UNSUPPORTED_DOMAIN` · `409 EMAIL_TAKEN` · `400 INVALID_ADMIN_CODE`
 
 ---
 
@@ -826,6 +864,33 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 
 ---
 
+## 3-1. 무엇이 바뀌면 무엇을 다시 받나
+
+목록·통계를 캐시하지 않는다는 원칙이 있어도, **언제 다시 받을지**는 정해야 한다.
+안 그러면 상태를 바꾼 뒤 화면에 옛 숫자가 남는다.
+
+| 한 일 | 다시 받을 것 |
+|---|---|
+| 로그인 · 앱 진입 | `getMe` → 역할에 맞는 첫 화면 데이터 |
+| 민원 접수 (#11) | `listComplaints` (내 글이 목록에 뜬다) |
+| 철회 (#15) | `listComplaints` (+ 관리자 화면이면 `getStats`) |
+| 상세 열람 (#17) | 응답이 갱신된 `Complaint`다. **목록의 그 행도 갱신한다** — 미확인→확인으로 바뀌었다. `getStats`도 다시 받는다 |
+| 수락·해결·보류·거절 (#18~21) | 응답이 갱신된 `Complaint`. 목록 행 교체 + `getStats` |
+| 코멘트 추가 (#22) | 응답이 새 `Comment`. 상세에 덧붙인다. 목록·통계는 그대로 |
+
+**응답을 쓰는 것과 다시 받는 것을 구분한다.** 상태 변경 API는 갱신된 `Complaint`를 돌려주므로
+상세는 그것으로 갈아끼우면 되고, **목록과 통계만 따로 받는다.** 전체를 다시 받을 필요가 없다.
+
+**`getStats`는 상태가 바뀔 때만 받는다.** 상태별 집계라 상태 전이가 없으면 변할 일이 없다.
+
+### 다른 사람의 변경
+
+관리자가 상태를 바꿔도 학생 화면은 저절로 바뀌지 않는다. 서버가 밀어주지 않기 때문이다.
+**갱신 방식(수동 새로고침 / 주기 폴링)은 아직 정해지지 않았다** — 7장 참조.
+정해지기 전까지 프론트는 위 표대로 **자기 행동에 대해서만** 다시 받는다.
+
+---
+
 ## 4. 두 쪽의 책임 경계
 
 | | 프론트가 한다 | 백엔드가 한다 |
@@ -843,6 +908,36 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 
 **들고 있으면 안 되는 것**: 민원 목록, 통계, 대화 이력, 코멘트.
 전부 화면을 그릴 때 다시 읽는다 — 다른 사람의 변경이 반영되지 않는 사고를 막는다.
+
+---
+
+## 4-1. 앱이 시작하고 끝나는 흐름
+
+**진입**
+```
+1. getMe()
+   ├─ 401 → 로그인 화면
+   └─ 성공 → role로 갈린다
+              student → listComplaints() + 작성 화면 준비 (startDraft는 "새 민원"을 누를 때)
+              admin   → getStats() + listComplaints()
+```
+
+`getMe()`를 가장 먼저 부른다. **role이 화면 전체를 정하므로 그 전에는 아무것도 그리지 않는다.**
+전환 버튼은 만들지 않는다 — 계정이 곧 역할이다.
+
+**로그아웃**
+```
+logout()  →  서버가 Redis 세션 삭제 + 쿠키 만료
+          →  프론트는 메모리에 들고 있던 것을 전부 버린다
+             (getMe 결과, 목록, 통계, draft_key, 입력 중이던 텍스트)
+          →  로그인 화면
+```
+
+**남은 `draft_key`를 다시 쓰지 않는다.** 로그아웃 후 다시 로그인하면 새로 발급받는다.
+이전 키는 Redis에 소유자가 남아 있어 다른 계정으로는 403이고, 같은 계정이어도
+접수 안 된 초안을 이어쓰는 것은 범위 밖이다(TTL로 사라진다).
+
+**탈퇴**도 같다. 세션이 지워지므로 로그아웃과 같은 정리를 하고 로그인 화면으로 보낸다.
 
 ---
 
@@ -885,7 +980,12 @@ export async function request(method, path, { body, query } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) { redirectToLogin(); throw new ApiError(401, 'UNAUTHENTICATED', ''); }
+  if (res.status === 401) {
+    const data = await res.json().catch(() => ({}));
+    // WRONG_PASSWORD·INVALID_CREDENTIALS는 화면에서 처리한다. 세션 만료만 여기서 가로챈다
+    if (data.error?.code === 'UNAUTHENTICATED') { redirectToLogin(); }
+    throw new ApiError(401, data.error?.code ?? 'UNAUTHENTICATED', data.error?.message ?? '');
+  }
   if (res.status === 204) return undefined;
 
   const data = await res.json();
@@ -900,7 +1000,7 @@ export async function request(method, path, { body, query } = {}) {
 |---|---|
 | `credentials`·CSRF 헤더 부착 | 22개 함수가 각자 붙이면 하나는 반드시 빠뜨린다 |
 | 오류를 `ApiError`로 던짐 | 호출하는 쪽이 `try/catch` 하나로 끝난다. 매번 `res.ok`를 보지 않는다 |
-| **401이면 로그인 화면으로** | 세션 만료는 어느 함수에서든 나므로 한 곳에서 처리한다 |
+| **`UNAUTHENTICATED`면 로그인 화면으로** | 세션 만료는 어느 함수에서든 나므로 한 곳에서 처리한다. 같은 401이라도 `WRONG_PASSWORD`·`INVALID_CREDENTIALS`는 화면이 처리해야 하므로 코드로 가른다 |
 
 컴포넌트에서 `fetch`를 직접 부르지 않는다. 엔드포인트가 바뀌면 `src/api/` 안에서 끝나야 한다.
 
