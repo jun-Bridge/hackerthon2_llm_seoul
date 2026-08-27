@@ -73,8 +73,9 @@ app/
 │
 ├─ llm/                    ★ Bedrock이 사는 곳
 │  ├─ client.py            invoke_model 호출
-│  ├─ tools.py             classify_and_refine_complaint 스키마
-│  └─ prompts.py           시스템 프롬프트
+│  ├─ tools.py             ask_followup · classify_and_refine 스키마
+│  ├─ choices.py           카테고리 7종 · 카테고리별 고정 칩
+│  └─ prompts.py           시스템 프롬프트 · 압축 프롬프트
 │
 └─ core/
    ├─ config.py            환경변수. 여기 한 곳에서만 읽는다
@@ -94,6 +95,7 @@ routes  →  services  →  repo / session / llm
 |---|---|
 | **라우터가 `repo`·`session`·`llm`을 직접 부르지 않는다** | 그러면 판단이 라우터로 샌다 |
 | **`repo`가 `services`를 부르지 않는다** | 순환이 생기고 트랜잭션 경계가 흐려진다 |
+| **같은 층끼리 부르지 않는다** (`llm` ↛ `repo`, `session` ↛ `repo`) | 누가 트랜잭션을 쥐는지 흐려진다. `llm`은 `school_id`를 알지도 못한다 |
 | **SQL은 `repo/`에만 있다** | `school_id` 필터를 강제할 곳이 한 군데여야 한다 |
 | **Redis 키 문자열은 `session/`에만 있다** | 키 이름이 흩어지면 지울 때 빠뜨린다 |
 | **Bedrock 호출은 `llm/`에만 있다** | 모델 교체가 이 폴더 안에서 끝나야 한다 |
@@ -180,8 +182,8 @@ def hold(complaint_id, school_id, admin_id, reason):
 
 **사유 없는 보류가 남지 않는다.** 둘 중 하나라도 실패하면 둘 다 없던 일이 된다.
 
-접수도 같다 — `complaints` 삽입과 `complaint_conversations`의 `complaint_id` 채우기가
-한 트랜잭션이다. 중간에 끊기면 주인 없는 대화가 남는다.
+접수는 **넷**이 한 트랜잭션이다(§7.7). 중간에 끊기면 근거 대화 없는 민원이나
+주인 없는 대화가 남는다.
 
 ---
 
@@ -195,7 +197,7 @@ POST /auth/signup  { email, password, admin_code? }
   ├ 도메인 추출          email.split('@')[-1] → 'chosun.ac.kr'
   ├ school_repo.find_by_domain()      없으면 400 UNSUPPORTED_DOMAIN
   ├ user_repo.exists(email)           있으면 409 EMAIL_TAKEN
-  ├ 역할 결정 (§9.2)                  코드 하나로 판정
+  ├ 역할 결정 (§9 "역할은 코드가 정한다")   코드 하나로 판정
   ├ 비밀번호 해시                     bcrypt(password) — 평문은 어디에도 남기지 않는다
   ├ user_repo.create(school_id, email, hash, role)   → PostgreSQL
   └ login_session.create(...)         → Redis, Set-Cookie
@@ -280,8 +282,8 @@ def verify_password(user_id, password) -> None:
 
 ## 7. 대화 세션 컨테이너
 
-> `requirements_v1.md` §7.5에 정의된 로직이다. UniVoice에 그대로 옮긴다.
-> **`.kiro` 정본에는 아직 없다** — 반영이 필요하다.
+> `requirements_v1.md` §7.5에 정의된 로직이다. UniVoice에 그대로 옮겼고,
+> `.kiro` 정본에도 반영했다(Epic 2-1 · M2-1 · `chat_sessions` 스키마).
 
 ### 7.1 세 겹으로 흐른다
 
@@ -424,7 +426,7 @@ id는 단조 증가하므로 `WHERE id > compacted_upto ORDER BY id`로 버퍼�
                 │     from = compacted_upto,  to = (최근 N턴 직전 메시지의 id)
                 │     압축이 도는 동안 새 턴이 들어와도 to는 움직이지 않는다
                 ├ 입력: 이전 context + (from, to] 구간
-                ├ LLM 호출 (요약 전용, 도구 없음) — 이것도 bedrock_logs에 남긴다
+                ├ llm.compact() 호출 (요약 전용, 도구 없음) — 서비스가 bedrock_logs에 남긴다
                 ├ 결과: 새 context · 새 title
                 └ 트랜잭션으로 갱신
                       SET context=?, title=?, compacted_upto=?
@@ -551,13 +553,7 @@ GET /chat-sessions
 
 **`user_id`로 거른다.** 게시판은 익명 공개지만 **초안 대화는 개인 것이다.**
 
-**접수는 `POST /chat-sessions/{sid}/submit`이다.** 그 세션의 마지막 `refined_json`을 꺼내
-`complaints`를 만들고, `chat_sessions.complaint_id`를 채우고, 새 세션을 하나 열어 함께 돌려준다.
-셋이 한 트랜잭션이다.
-
-**접수된 세션은 이어서 대화할 수 없다.** `complaint_id`가 차면 읽기 전용이 되고,
-새로 쓰려면 새 세션을 연다. 이미 게시판에 올라간 민원의 근거 대화를 뒤에서
-바꿀 수 있으면 안 되기 때문이다.
+**메시지가 없는 세션은 나오지 않는다**(§7.8). 접수·철회된 것은 읽기 전용으로 남는다(§7.9).
 
 ## 7-1. 챗봇이 도는 단계
 
@@ -647,7 +643,7 @@ POST /chat-sessions/{sid}/messages   { message | choice }
   ├ [커넥션 반납] ★ LLM을 부르는 동안 붙들지 않는다
   │
   ├ llm.refine(context, buffer)                     ← 세션주제 + 버퍼만. 도구 둘을 붙여 호출
-  │    └ bedrock_log_repo.add(...)
+  │    (호출 결과는 Usage로 돌아오고, 로그 적재는 서비스가 한다)
   │
   ├─ ask_followup 인 경우
   │    ├ choices = _merge_choices(missing, model_choices, 지금까지의 category)
@@ -657,6 +653,7 @@ POST /chat-sessions/{sid}/messages   { message | choice }
   │    └ return { is_complete:false, question, choices, step }
   │
   └─ classify_and_refine 인 경우
+       ├ [커넥션 재획득]
        ├ conversation_repo.add(conn, sid, 'assistant', "[정리 완료] …", refined_json=결과)
        ├ chat_session_repo.update_meta(conn, sid, title=…, category=…)
        ├ state.set(sid, step='confirm')
@@ -760,7 +757,6 @@ POST /chat-sessions/{sid}/messages { "message": "카테고리를 다시 고를�
 | **세션주제**(압축된 맥락) | PostgreSQL | LLM 비용을 다시 치러야 하고, 그 사이 맥락 없이 대화가 돈다 |
 | 압축 경계 (`compacted_upto`) | PostgreSQL | 어디까지 압축했는지 몰라 중복 압축된다 |
 | 로그인 세션 | Redis | 다시 로그인하면 된다 |
-| 초안 소유권 | Redis | 초안을 못 이어 쓴다 (새로 시작) |
 | 턴 진행 표시 | Redis | 중복 호출이 한 번 날 수 있다 |
 | 단계·반복 횟수 | Redis | 칩이 안 보인다. 대화는 멀쩡하다 |
 | 압축 진행 표시 | Redis | 압축이 두 번 돌 수 있다. 다음 턴에 정리된다 |
@@ -791,7 +787,7 @@ LLM 응답 도착
 |---|---|---|
 | **접속 (앱 진입)** | — | `sess:{id}` 조회 → 로그인 여부 |
 | **세션 목록 열기** | `chat_sessions` 조회 | — |
-| **세션 하나 열기** | 대화 기록 전체 조회 | `sess_state:{sid}` → 현재 단계·칩 |
+| **세션 하나 열기** | 대화 기록 + 마지막 턴의 `choices`(정본) | `sess_state:{sid}` (있으면 빠른 경로) |
 | **새로고침** | 위와 동일 (전부 다시 읽는다) | 동일 |
 | **메시지 전송** | 대화 삽입·조회 | 턴 락 획득·해제 |
 | **나가기 / 탭 닫기** | **아무것도 하지 않는다** | 아무것도 하지 않는다 |
@@ -800,15 +796,14 @@ LLM 응답 도착
 `beforeunload`로 뭔가 보내려 하지 않는다 — 그 요청은 도착이 보장되지 않는다.
 
 **새로고침은 전부 다시 읽는다.** 캐시하지 않으므로 특별한 복원 절차가 없다.
-`sess_state`가 만료됐으면 단계 정보만 없는 것이고, 대화는 DB에서 그대로 온다.
-그때는 마지막 assistant 발화를 다시 보여주고 칩 없이 자유 입력을 받는다.
+`sess_state`가 만료됐어도 **칩은 사라지지 않는다** — 마지막 assistant 행의 `choices`가 정본이다.
+Redis는 그것을 다시 읽지 않으려는 캐시일 뿐이다.
 
 ### 7-2.4 Redis가 통째로 죽으면
 
 | 잃는 것 | 결과 |
 |---|---|
 | 로그인 세션 전부 | 모두 로그아웃. 다시 로그인하면 된다 |
-| 초안 소유권 | 진행 중이던 초안을 못 이어 쓴다. **대화는 DB에 남아 있다** |
 | 턴 락 | 그 순간 중복 호출 가능. 다음 턴부터 정상 |
 | 단계 정보 | 칩이 안 보인다. 자유 입력으로 계속 가능 |
 
@@ -824,7 +819,7 @@ LLM 응답 도착
 | `sess:{session_id}` | 로그인 유지 시간 | **요청마다 연장** (sliding) |
 | `turn:{sid}:running` | 짧게 (한 턴 최대 시간) | — |
 | `compact:{sid}` | 짧게 (압축 1회 시간) | — |
-| `sess_state:{sid}` | 초안과 같게 | 턴마다 갱신 |
+| `sess_state:{sid}` | 짧게 (캐시일 뿐, 정본은 DB) | 턴마다 갱신 |
 
 **모든 키에 TTL이 있다.** 없는 키를 만들지 않는다 — 지우는 것을 잊으면 영원히 남는다.
 세션 삭제·탈퇴 시에도 명시적으로 지우지만, TTL이 마지막 안전망이다.
@@ -981,31 +976,37 @@ CLASSIFY_AND_REFINE = {
 ### 8.5 응답 파싱
 
 ```python
-def refine(history: list[dict]) -> RefineResult:
+def refine(context: str | None, buffer: list[dict]) -> RefineResult:
     t0 = time.monotonic()
     try:
-        data = _invoke(history)
+        data = _invoke(context, buffer)
     except Exception as e:
-        bedrock_log_repo.add(model_id=MODEL_ID, is_complete=False,
-                             latency_ms=_ms(t0), error=str(e)[:500])
-        raise BedrockError()                       # → 502
+        raise BedrockError(usage=Usage(latency_ms=_ms(t0), error=str(e)[:500]))   # → 502
 
     block = next((b for b in data.get("content", []) if b.get("type") == "tool_use"), None)
-
-    bedrock_log_repo.add(
-        model_id=MODEL_ID,
-        is_complete=(block or {}).get("name") == "classify_and_refine_complaint",
+    usage = Usage(
         latency_ms=_ms(t0),
         input_tokens=data.get("usage", {}).get("input_tokens"),
         output_tokens=data.get("usage", {}).get("output_tokens"),
     )
 
     if block is None:
-        return _retry_once_then_default(history)   # tool_choice=any인데도 없으면 이례적
+        return _retry_once_then_default(context, buffer)   # tool_choice=any인데도 없으면 이례적
 
     if block["name"] == "ask_followup":
-        return RefineResult.incomplete(**block["input"])
-    return RefineResult.complete(**block["input"])
+        return RefineResult.incomplete(**block["input"], usage=usage)
+    return RefineResult.complete(**block["input"], usage=usage)
+```
+
+**`llm/`은 DB에 쓰지 않는다.** 호출 결과를 `Usage`에 담아 돌려주기만 하고,
+**`bedrock_logs`에 남기는 것은 서비스가 한다.** 계층 규칙상 `llm`과 `repo`는 같은 층이라
+서로를 부르면 안 되고, `llm`은 `school_id`를 알지도 못한다(그건 요청 맥락의 값이다).
+
+```python
+# services/session_service.py
+result = llm.refine(context, buffer)
+bedrock_log_repo.add(conn, school_id=session.school_id, model_id=result.usage.model_id,
+                     is_complete=result.is_complete, **result.usage.as_row())
 ```
 
 **`stop_reason`이 아니라 `content`의 `tool_use` 블록을 본다.** 도구 호출이 있으면
@@ -1020,8 +1021,8 @@ def refine(history: list[dict]) -> RefineResult:
 **압축 호출도 남긴다.** 심사에서 "호출이 몇 번 있었나"를 보는데 정제만 세면 실제보다 적다.
 `is_complete`는 정제 호출에만 의미가 있으므로 압축 건은 `false`로 둔다.
 
-**`school_id`는 `chat_sessions.school_id`에서 가져온다.** 압축은 요청이 끝난 뒤 도는
-백그라운드 작업이라 **로그인 세션이 이미 없을 수 있다.** 요청 컨텍스트에 기대면 안 된다.
+**`school_id`는 서비스가 `chat_sessions.school_id`에서 읽어 넣는다.** 압축은 요청이 끝난 뒤
+도는 백그라운드 작업이라 **로그인 세션이 이미 없을 수 있다.** 요청 컨텍스트에 기대면 안 된다.
 `chat_sessions`에 `school_id`를 복제해둔 이유 중 하나가 이것이다.
 
 **로그는 성공·실패 모두 남긴다.** 실패만 안 남기면 심사 때 "호출이 몇 번 있었나"가 어긋난다.
