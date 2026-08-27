@@ -5,7 +5,10 @@
 구현 예정
 - `service.py` — 가입, 로그인, 로그아웃, 현재 사용자 조회
 - `password.py` — 해싱·검증 (bcrypt/argon2). **평문 저장 금지**
-- `session.py` — 로그인 세션 발급·검증 (Redis 보관)
+- `session.py` — 로그인 세션 발급·검증. **HttpOnly 쿠키에 세션 id, 실체는 Redis.**
+  EventSource가 쿠키를 자동으로 싣기 때문에 SSE가 추가 작업 없이 인증된다.
+  서버가 세션을 지울 수 있어 강제 로그아웃·단일 접속 강제가 즉시 먹는다.
+  `SameSite=Lax` + 상태 변경 요청 CSRF 대비.
 - `guard.py` — 소유자 인가. "이 세션·문서가 이 사용자 것인가" 판정
 - `presence.py` — **단일 환경 접속 강제.** 계정당 활성 접속 하나(`user:{id}:active_conn`).
   새 로그인이 들어오면 기존 접속을 무효화한다.
