@@ -107,7 +107,7 @@ def init_database():
         CREATE TABLE IF NOT EXISTS complaint_conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             complaint_id INTEGER,
-            draft_key TEXT NOT NULL,
+            chat_session_id INTEGER,      -- 접수 전 조회는 이걸로
             role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -278,8 +278,8 @@ if __name__ == "__main__":
 학생 메시지마다 대화를 기록하고 Bedrock을 호출해 다음 턴을 조율합니다.
 
 **Acceptance Criteria**:
-- [ ] `send_message(draft_key, student_message)`: 학생 발화 기록 → 전체 대화 로드 → `refine_complaint` 호출 → AI 응답도 기록 → 결과 반환
-- [ ] `db.add_conversation_turn`, `db.get_conversation` 구현 (draft_key 기준)
+- [ ] `send_message(session_id, student_message)`: 학생 발화 기록 → 맥락(요약+버퍼) 로드 → `refine` 호출 → AI 응답·선택지 기록 → 결과 반환
+- [ ] `conversation_repo.add`, `conversation_repo.list` 구현 (chat_session_id 기준)
 - [ ] `is_complete=False`이면 `follow_up_question`을 AI 메시지로 기록
 - [ ] `is_complete=True`이면 요약 메시지("[정리 완료] {제목}")를 AI 메시지로 기록
 
@@ -296,7 +296,7 @@ if __name__ == "__main__":
 학생이 자연어로 입력하고, 부족하면 AI가 되묻고, 충분하면 미리보기가 뜨는 채팅 UI를 구현합니다.
 
 **Acceptance Criteria**:
-- [ ] 새 작성 시작 시 `st.session_state.draft_key = str(uuid4())`
+- [ ] 새 작성 시작 시 `POST /chat-sessions`로 세션 행을 만든다 (소유자는 그 행에 남는다)
 - [ ] `st.chat_input()`으로 입력 → `ComplaintService.send_message()` 호출
 - [ ] 대화 이력을 `st.chat_message()`로 시간순 표시
 - [ ] `is_complete=False`: 다음 입력을 계속 받음 (잠금 없음)
@@ -316,8 +316,8 @@ if __name__ == "__main__":
 
 **Acceptance Criteria**:
 - [ ] `ComplaintService.submit()` → `db.create_complaint()` 호출
-- [ ] 접수 성공 시 해당 `draft_key`의 모든 대화 행이 새 `complaint_id`로 연결됨
-- [ ] 접수 후 `draft_key`를 새로 발급해 다음 민원 작성이 이전 대화와 섞이지 않음
+- [ ] 접수 성공 시 그 세션의 모든 대화 행에 `complaint_id`가 채워진다 (두 FK가 모두 채워진 상태)
+- [ ] 접수 후 새 세션을 발급해 다음 민원 작성이 이전 대화와 섞이지 않음. 접수된 세션은 읽기 전용
 - [ ] 접수 직후 게시판이 재조회되어 새 항목이 보임
 
 **Files to modify**:
@@ -355,7 +355,7 @@ if __name__ == "__main__":
 본인이 접수한 민원에 한해 철회 버튼을 보여주고, 비밀번호 확인 후 상태를 `철회`로 전환합니다.
 
 **Acceptance Criteria**:
-- [ ] `complaint["submitted_by_user_id"] == st.session_state.user_id`인 항목에만 철회 버튼 표시
+- [ ] `complaint["submitted_by_user_id"] == 세션 상태(user_id)`인 항목에만 철회 버튼 표시
 - [ ] 클릭 시 비밀번호 입력 폼 (`st.form`)이 뜬다
 - [ ] `ComplaintService.withdraw(complaint_id, user_id, password)`:
   - 비밀번호 불일치 → "비밀번호가 올바르지 않습니다", 상태 불변
@@ -436,7 +436,7 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 
 **Acceptance Criteria**:
 - [ ] `st.columns()`로 ID/분류·위치/제목/접수시각/상태 렌더링 (조치 버튼은 상세 화면에만 — 목록에는 없음)
-- [ ] 행 클릭 시 `st.session_state.selected_complaint_id` 설정과 **같은 처리 흐름에서** `ComplaintService.open_detail(id, school_id)` 호출
+- [ ] 행 클릭 시 `세션 상태(selected_complaint_id)` 설정과 **같은 처리 흐름에서** `ComplaintService.open_detail(id, school_id)` 호출
 - [ ] 상세 화면에 학생-AI 대화 전체(`get_conversation_by_complaint`)와 최종 카테고리/위치/제목/본문 표시
 - [ ] 상세 화면을 다시 열어도(이미 확인 이후 상태) 에러 없이 정상 표시됨 (재호출 안전성 검증)
 - [ ] 목록·상세 어디에도 철회 버튼은 없음 (관리자는 철회 불가)
@@ -456,7 +456,7 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 **Acceptance Criteria**:
 - [ ] 현재 상태가 `확인`일 때만 [수락][보류][거절] 세 버튼이 보임 (`미확인`·`처리중`·`해결완료`·`보류`·`거절` 상태에서는 안 보임)
 - [ ] "수락" 클릭 → `ComplaintService.accept()` → 성공 시 `처리중`으로 전환, `st.rerun()`
-- [ ] "보류" 클릭 → `st.session_state.hold_modal_open = True`로 모달 오픈 (버튼 클릭 즉시 전환되지 않음)
+- [ ] "보류" 클릭 → `세션 상태(hold_modal_open) = True`로 모달 오픈 (버튼 클릭 즉시 전환되지 않음)
 - [ ] 모달 내 코멘트 입력창이 비어 있으면 "보류 확정" 버튼이 비활성화되거나, 제출 시 `ComplaintService.hold()`가 거부하고 에러 메시지 표시
 - [ ] 모달에서 사유를 입력하고 확정하면 `보류` 전환 + 코멘트 등록이 동시에 반영, 모달 닫힘
 - [ ] "거절" 클릭 → `ComplaintService.reject()` → 성공 시 즉시 `거절`로 전환 (코멘트 입력 없이 즉시)

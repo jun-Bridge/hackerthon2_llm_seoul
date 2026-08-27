@@ -153,6 +153,11 @@ CREATE TABLE complaint_comments (
 
 ## File Structure
 
+> **대화 세션 테이블이 추가됐다.** `chat_sessions`(과거 대화 목록·세션주제·압축 경계)와
+> `complaint_conversations`의 두 FK(`chat_session_id` SET NULL · `complaint_id` CASCADE) 구조는
+> `requirements.md`의 스키마와 `docs/backend-design.md` §7이 정본이다.
+
+
 ```
 hackerthon2_llm_1/
 ├─ app.py                        # 진입점: 인증 → role 분기
@@ -452,7 +457,21 @@ class DatabaseManager:
 
 ### 2. BedrockClient — 멀티턴 분류+정제 (도구 호출은 강제하지 않음)
 
-**책임**: 학생과의 대화 전체를 Bedrock에 넘기고, 모델이 스스로 판단하게 한다 — 정보가 부족하면 **일반 텍스트로 되묻는 질문**을, 충분하면 **도구를 호출**해 구조화된 확정안을 반환한다. `tool_choice`를 강제하지 않는 이유는, 강제하면 정보가 부족해도 모델이 억지로 필드를 채워 넣을 위험이 있기 때문이다.
+**책임**: 맥락(요약 + 최근 대화)을 Bedrock에 넘기고, 모델이 **도구 둘 중 하나를 고르게** 한다.
+
+| 모델이 부른 것 | 뜻 |
+|---|---|
+| `ask_followup(missing, question, choices[])` | **부족하다** — 되물을 질문과 선택지를 함께 준다 |
+| `classify_and_refine_complaint(...)` | 충분하다 — 확정안 |
+
+**`tool_choice: {"type": "any"}`로 둘 중 하나를 반드시 부르게 강제한다.**
+
+> 이전 설계는 "부족하면 도구를 안 부르고 일반 텍스트로 되묻는다"였고, 강제하면 모델이
+> 억지로 필드를 채운다고 봤다. **그런데 부족을 '도구의 부재'로 읽으면 되묻는 문장만 얻고
+> 선택지를 만들 수 없다.** 억지 채움은 도구를 나누는 것으로 막는다 —
+> 부족할 때 부를 도구가 따로 있으면 확정 도구를 억지로 부를 이유가 없다.
+
+상세 규격은 `docs/backend-design.md` §8을 정본으로 본다.
 
 ```python
 CATEGORIES = ["냉난방 / 공조", "위생 / 배관", "전기 / 설비",
@@ -483,7 +502,7 @@ class BedrockClient:
         }
 
     def refine_complaint(self, conversation: list[dict]) -> dict:
-        """반환: is_complete=False → follow_up_question / True → category,location,refined_title,refined_body"""
+        """반환: is_complete=False → missing·question·choices / True → 확정안 + session_title"""
         messages = [
             {"role": "user" if t["role"] == "student" else "assistant", "content": t["content"]}
             for t in conversation
@@ -503,7 +522,7 @@ class BedrockClient:
 
         text_blocks = [b['text'] for b in response_body.get('content', []) if b.get('type') == 'text']
         follow_up = text_blocks[0] if text_blocks else "추가 정보를 알려주세요."
-        return {"is_complete": False, "follow_up_question": follow_up}
+        return {"is_complete": False, **block["input"]}   # missing·question·choices
 ```
 
 ### 3. ComplaintService
@@ -522,7 +541,7 @@ class ComplaintService:
         result = self.bedrock.refine_complaint(conversation)
 
         ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
-                       else result.get("follow_up_question", "추가 정보를 알려주세요."))
+                       else result.get("question", "추가 정보를 알려주세요."))
         self.db.add_conversation_turn(draft_key, role='assistant', content=ai_message)
         return result
 
