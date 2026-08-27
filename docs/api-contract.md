@@ -120,7 +120,11 @@ interface ConversationTurn {
 
 ## 1. 연결부 한눈에
 
-22개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
+> **정본에 없는 것 두 가지를 이 계약서가 요구한다** — `complaint_conversations.refined_json` 컬럼과
+> `bedrock_logs` 테이블. 둘 다 없으면 구현이 불가능하다(2.2 #11 · 2.4 #23).
+> `.kiro` 스키마에 반영해야 한다.
+
+23개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
 | # | 프론트 함수 | HTTP | 백엔드 함수 | 무엇을 하나 | 건드리는 테이블 |
 |---|---|---|---|---|---|
@@ -146,8 +150,9 @@ interface ConversationTurn {
 | 20 | `holdComplaint` | `POST /admin/complaints/{id}/hold` | `hold` | 확인 → 보류 **+ 사유** | `complaints` W · `complaint_comments` W |
 | 21 | `rejectComplaint` | `POST /admin/complaints/{id}/reject` | `reject` | 확인 → 거절 | `complaints` W |
 | 22 | `addComment` | `POST /admin/complaints/{id}/comments` | `add_comment` | 코멘트 추가 | `complaint_comments` W |
+| 23 | `getBedrockLogs` | `GET /admin/bedrock-logs` | `get_bedrock_logs` | 호출 로그 (심사용) | `bedrock_logs` R |
 
-`R` 읽기 · `W` 쓰기 · `D` 삭제. 16~22는 `role == 'admin'` 필수, 아니면 403.
+`R` 읽기 · `W` 쓰기 · `D` 삭제. 16~23은 `role == 'admin'` 필수, 아니면 403.
 **모든 `complaints` 접근에는 `WHERE school_id = <세션값>`이 붙는다.** 아래 개별 항목에서 반복하지 않는다.
 
 ---
@@ -290,6 +295,14 @@ def create_draft(user = Depends(current_user)) -> DraftOut:
 **"새 민원 작성"을 누를 때 한 번.** 이 키가 이후 대화 전체를 묶는다.
 행은 첫 메시지에서 생기므로 여기서는 키만 발급한다.
 
+> **`draft_key`는 소유권을 검증할 수 없다.** `complaint_conversations`에 `user_id`가 없어서
+> 남의 키를 알면 그 초안 대화를 읽고 이어 쓸 수 있다. uuid4라 추측은 사실상 불가능하지만
+> **구조적으로 막혀 있지는 않다.**
+>
+> 1차에서는 이대로 간다(초안은 접수 전 임시 데이터, 데모 범위). 막으려면
+> `complaint_conversations`에 `owner_user_id`를 넣고 draft 접근마다 세션과 대조한다.
+> 접수된 민원은 `school_id`·`submitted_by_user_id`로 정상 보호된다 — 이 이야기는 초안에만 해당한다.
+
 ---
 
 #### 9. `sendMessage` — **이 서비스의 핵심**
@@ -321,6 +334,8 @@ def send_message(self, draft_key: str, student_message: str) -> dict:
 | `message` | `str` (본문) | 학생이 친 구어체 문장 |
 
 **건드리는 것** — `complaint_conversations` INSERT **2행**(학생·AI). Bedrock 호출 1회.
+호출 결과를 `bedrock_logs`에 1행 남긴다(#23).
+확정안이 나온 턴이면 그 AI 행의 `refined_json`에 JSON을 함께 저장한다 — 접수 때 여기서 꺼낸다.
 **`complaints`는 건드리지 않는다** — 아직 접수 전이다.
 
 **하는 일** — Bedrock이 도구(`classify_and_refine_complaint`)를 호출할 만큼 정보가 모였는지
@@ -355,7 +370,7 @@ export async function getDraftConversation(draftKey) { ... }   // → Conversati
 ```python
 @router.get("/drafts/{draft_key}/conversation")
 def get_draft_conversation(draft_key: str, user = Depends(current_user)) -> list[TurnOut]:
-    return db.get_conversation(draft_key)      # complaint_id IS NULL, 시간순
+    return db.get_conversation(draft_key)      # WHERE draft_key=? ORDER BY created_at
 ```
 
 **프론트는 대화 배열을 자기 상태에만 들고 있지 않는다.** 화면을 다시 그릴 때 이걸 읽는다.
@@ -371,14 +386,33 @@ export async function submitDraft(draftKey) { ... }   // → { complaint_id, nex
 ```python
 @router.post("/drafts/{draft_key}/submit", status_code=201)
 def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
-    refined = service.last_refined(draft_key)     # 없으면 409 DRAFT_NOT_COMPLETE
+    refined = db.get_last_refined(draft_key)      # ★ 아래 설명 — 없으면 409
     cid = service.submit(user.school_id, user.id, draft_key, refined)
     return SubmitOut(complaint_id=cid, next_draft_key=str(uuid4()))
+
+# db.get_last_refined
+#   SELECT refined_json FROM complaint_conversations
+#   WHERE draft_key=? AND refined_json IS NOT NULL
+#   ORDER BY created_at DESC LIMIT 1
 
 # service.submit → db.create_complaint
 #   ① complaints INSERT (status='미확인', confirmed_at=NULL)
 #   ② complaint_conversations UPDATE — 그 draft_key의 모든 행에 complaint_id 채움
 ```
+
+> ### ⚠ 스키마 한 컬럼이 필요하다
+>
+> **`complaint_conversations`에 `refined_json TEXT` 컬럼을 추가해야 한다.**
+>
+> 정본 스키마에서 AI 발화는 `content`에 `"[정리 완료] {제목}"` 문자열로만 남는다.
+> **`category`·`location`·`refined_body`가 어디에도 저장되지 않는다.**
+> 그래서 접수 시점에 서버가 확정안을 복원할 방법이 없다.
+>
+> `is_complete=true`인 턴을 저장할 때 확정안 JSON을 이 컬럼에 함께 넣으면
+> 접수 시 마지막 것을 꺼내 쓸 수 있다. 되묻는 턴은 `NULL`이다.
+>
+> 이 컬럼이 `is_complete` 여부 표시도 겸한다 —
+> `refined_json IS NOT NULL`인 턴이 하나도 없으면 아직 확정 전이므로 `409`.
 
 | 파라미터 | 타입 | 설명 |
 |---|---|---|
@@ -411,7 +445,11 @@ export async function getComplaintConversation(id) { ... }         // → Conver
 @router.get("/complaints")
 def list_complaints(status: Status | None = None,
                     user = Depends(current_user)) -> list[ComplaintOut]:
-    return db.list_complaints(user.school_id, status)   # 철회 제외, 최신순
+    rows = db.list_complaints(user.school_id, status)   # 철회 제외, 최신순
+    for r in rows:
+        r["is_mine"] = (r.pop("submitted_by_user_id") == user.id)      # 목록에서도 계산
+        r["comments"] = db.get_hold_reasons(r["id"])                   # 보류 사유만
+    return rows
 
 @router.get("/complaints/{cid}")
 def get_complaint(cid: int, user = Depends(current_user)) -> ComplaintOut:
@@ -434,7 +472,12 @@ def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[T
 **`is_mine` 계산이 중요한 곳** — `submitted_by_user_id`를 세션과 대조해 불린으로 바꾸고
 **원본 id는 응답에서 지운다.** 익명성이 여기서 지켜진다. 프론트는 이 값으로 철회 버튼만 그린다.
 
-**목록에서 `comments`는 빈 배열이다.** 상세에서만 채운다.
+**목록의 `comments`에는 보류 사유만 담는다.** 정본 US-3.6이 "관리자가 남긴 코멘트, 특히 보류 사유를
+게시판에서도 확인할 수 있어야 한다"고 요구하는데, 학생 화면은 카드 목록이라 상세를 따로 열지 않는다.
+그래서 **`is_hold_reason=1`인 것만** 목록에 실어 보낸다. 전부 실으면 응답이 무거워진다.
+상세(`getComplaint`)에서는 전부 채운다.
+
+**`is_mine`은 목록에서도 계산한다.** 철회 버튼이 게시판 카드에 붙기 때문이다.
 
 **학생이 상세를 열어도 상태가 안 바뀐다.** 확인 전환은 관리자 전용(#17)에서만 일어난다.
 
@@ -568,6 +611,56 @@ def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
 
 ---
 
+#### 23. `getBedrockLogs` — 호출 로그 (대회 심사용)
+
+```js
+export async function getBedrockLogs(limit = 50) { ... }   // → BedrockLog[]
+```
+```python
+@router.get("/admin/bedrock-logs")
+def get_bedrock_logs(limit: int = 50, user = Depends(require_admin)) -> list[BedrockLogOut]:
+    return db.get_bedrock_logs(user.school_id, limit)
+```
+
+```ts
+interface BedrockLog {
+  id: number;
+  called_at: string;
+  model_id: string;          // 'global.anthropic.claude-sonnet-5'
+  is_complete: boolean;      // 도구 호출 성사 여부
+  latency_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  error: string | null;
+}
+```
+
+정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
+**대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
+
+> ### ⚠ 테이블 하나가 필요하다
+>
+> ```sql
+> CREATE TABLE bedrock_logs (
+>     id INTEGER PRIMARY KEY AUTOINCREMENT,
+>     school_id INTEGER,
+>     called_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+>     model_id TEXT NOT NULL,
+>     is_complete BOOLEAN NOT NULL,
+>     latency_ms INTEGER,
+>     input_tokens INTEGER,
+>     output_tokens INTEGER,
+>     error TEXT
+> );
+> ```
+>
+> `BedrockClient.refine_complaint()`가 호출할 때마다 1행씩 남긴다.
+> **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 로그에 중복 보관되면
+> 익명성 관리 대상이 두 곳으로 늘어난다. 심사에 필요한 것은 "호출이 실제로 일어났다"는
+> 사실과 지연·토큰이지 내용이 아니다.
+
+---
+
 #### 22. `addComment` — 코멘트 추가
 
 ```js
@@ -670,7 +763,7 @@ src/api/
 ├─ auth.js        7개
 ├─ draft.js       4개
 ├─ board.js       4개
-└─ admin.js       7개
+└─ admin.js       8개
 ```
 
 ```js
@@ -754,6 +847,8 @@ app/llm/            BedrockClient — 도구 호출로 분류·정제
 
 ## 7. 합의가 필요한 것
 
+- **정본 스키마 반영** — `complaint_conversations.refined_json` 컬럼과 `bedrock_logs` 테이블.
+  둘 다 없으면 접수와 심사용 로그가 구현되지 않는다. `.kiro`를 고쳐야 한다
 - **`GET /api/complaints` 페이지네이션** — 민원이 쌓이면 필요하다. 데모 규모에서 미룰지
 - **폴링 주기** — "실시간 반영"을 새로고침으로 할지, 몇 초 간격 폴링으로 할지.
   SSE·WebSocket은 1차 범위 밖으로 본다
@@ -815,3 +910,45 @@ app/llm/            BedrockClient — 도구 호출로 분류·정제
 
 게시판 건수(`feedCount`)는 별도 API를 두지 않는다. `listComplaints()` 결과의 길이를 쓴다.
 관리자 통계만 `GET /api/admin/stats`로 따로 받는데, 상태별 집계라 목록만으로는 안 나오기 때문이다.
+
+---
+
+## 9. 정본 User Story 커버리지
+
+`.kiro/specs/complaint-assistant/requirements.md`의 34개를 전부 대조했다.
+
+| US | 내용 | 어디서 |
+|---|---|---|
+| 1.1 | 이메일 도메인으로 학교 자동 매칭 | #1 `lookupSchool` · #2 `signup` |
+| 1.2 | 관리자 코드 | #2 `admin_code` |
+| 1.3 | 미등록 도메인 차단 | #1 `supported:false` · #2 `400 UNSUPPORTED_DOMAIN` |
+| 1.4 | 내 학교 데이터만 | 0장 학교 격리 — 세션 `school_id`로 전부 필터 |
+| 1.5 | 비밀번호 변경 | #6 |
+| 1.6 | 탈퇴 시 데이터 정리 | #7 (민원은 익명으로 남고 소유자만 `NULL`) |
+| 2.1~2.2 | 자연어 입력 → AI 변환 | #9 `sendMessage` |
+| 2.3~2.4 | 되묻기 · 이전 답변 반영 | #9 `is_complete=false` · 대화 전체를 매번 로드 |
+| 2.5 | 미리보기 확인 후 결정 | #9 `preview` |
+| 2.6 | 대화로 수정 요청 | #9 재호출 (수정 전용 API 없음) |
+| 2.7 | 버튼을 눌러야 접수 | #11 `submitDraft` |
+| 2.8 | 원문 보기 | #14 `getComplaintConversation` |
+| 2.9 | 철회 + 비밀번호 확인 | #15 `withdrawComplaint` |
+| 2.10 | 본인 것만 철회 | `is_mine` + 서버 `submitted_by_user_id` 대조 |
+| 3.1~3.2 | 목록과 표시 필드 | #12 · `Complaint` 타입 |
+| 3.3 | 익명 | 응답에서 작성자 id 제거, `is_mine`만 |
+| 3.4 | 원문 토글 | #14 |
+| 3.5 | 상태 배지 | `status` |
+| 3.6 | **게시판에서 코멘트(보류 사유) 확인** | #12 목록 응답에 `is_hold_reason` 코멘트 포함 |
+| 3.7 | 철회된 것은 안 보임 | #12 (철회 항상 제외) |
+| 4.1 | 통계 | #16 `getStats` |
+| 4.2 | 상태별 필터 | #12 `?status=` |
+| 4.3 | 표 컬럼 | `Complaint` 타입 |
+| 4.4 | 미확인 구분 | `status` |
+| 4.5 | **클릭 시 자동 확인 전환** | #17 `openComplaint` (POST인 이유 포함) |
+| 4.6 | 확인 상태에서만 결정 버튼 | 3장 전이 규칙 · #18~21 |
+| 4.7 | 언제든 코멘트 추가 | #22 |
+| 4.8 | 학생 게시판에 즉시 반영 | ⚠ **7장 미결** — 새로고침 vs 폴링 |
+| 4.9 | 철회된 것 목록에서 사라짐 | #12 |
+| 5.1 | **Bedrock 호출 로그** | #23 `getBedrockLogs` |
+| 5.2 | EC2 배포 | 인프라. API 아님 |
+
+**API로 덮이지 않은 것은 US-4.8 하나**이고, 그건 갱신 방식을 정하지 않아서다(7장).
