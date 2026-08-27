@@ -204,12 +204,11 @@ interface ConversationTurn {
 > 워커가 여럿이라는 사실이 이 계약의 여러 곳을 정한다 — 세션이 Redis에 있어야 하는 이유,
 > 전이 검증이 `UPDATE ... WHERE`인 이유, 목록·통계를 캐시하지 않는 이유가 전부 여기서 나온다.
 
-24개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
+23개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
 | # | 프론트 함수 | HTTP | 백엔드 함수 | 무엇을 하나 | 건드리는 테이블 |
 |---|---|---|---|---|---|
-| 0 | `listSchools` | `GET /schools` | `list_schools` | 지원 학교 목록 (가입 화면) | `schools` R |
-| 1 | `lookupSchool` | `POST /auth/school-lookup` | `lookup_school` | 이메일 도메인으로 학교 확인 | `schools` R |
+| 1 | `listSchools` | `GET /schools` | `list_schools` | 지원 학교 목록 (가입 드롭다운) | `schools` R |
 | 2 | `signup` | `POST /auth/signup` | `signup` | 가입 + 자동 로그인 | `schools` R · `admin_codes` R · `users` W |
 | 3 | `login` | `POST /auth/login` | `login` | 로그인 | `users` R |
 | 4 | `logout` | `POST /auth/logout` | `logout` | 세션 삭제 | — |
@@ -244,7 +243,7 @@ interface ConversationTurn {
 
 ---
 
-#### 0. `listSchools` — 지원 학교 목록
+#### 1. `listSchools` — 지원 학교 목록
 
 ```js
 /** 가입 화면에서 지원 학교를 보여준다. 인증 불필요. */
@@ -264,9 +263,12 @@ interface School {
 }
 ```
 
-**왜 필요한가**: 지금 계약에는 `lookupSchool(email)`뿐이라, 사용자가 **이메일을 다 치고 나서야**
-자기 학교가 지원되는지 안다. 미지원이면 그때 막히고 이유도 모른다.
-가입 화면에 지원 학교를 먼저 보여주면 그 좌절이 없어진다.
+**가입 화면이 이걸로 돌아간다.** 사용자가 학교를 고르면 **도메인이 잠기고** 이메일 아이디만
+입력한다. 프론트가 `아이디 + '@' + email_domain`으로 이메일을 완성해 `signup`에 보낸다.
+
+**이 방식이 도메인 오타를 원천 차단한다.** 고를 수만 있으므로 존재하지 않는 도메인을 쓸 수 없고,
+다른 학교 도메인을 자기 학교에 붙일 수도 없다. 서버는 여전히 도메인으로 학교를 정하므로
+**학교를 정하는 근거는 하나(도메인)뿐이다** — 프론트가 보낸 학교 이름을 믿지 않는다.
 
 **`aliases`가 있는 이유**: 한국 학교 이름은 줄여 부르는 쪽이 자연스럽다.
 "조대"·"전북대"·"지스트"로 찾을 수 있어야 목록이 쓸모가 있다.
@@ -280,59 +282,45 @@ ALTER TABLE schools ADD COLUMN aliases TEXT[];   -- PostgreSQL 배열
 
 ---
 
-#### 1. `lookupSchool` — 이메일로 학교 확인
-
-```js
-// src/api/auth.js
-/** 가입 화면에서 이메일 입력이 끝나면 호출. 학교명을 미리 보여주고 관리자 코드칸 노출을 정한다. */
-export async function lookupSchool(email) { ... }   // → { supported, school_name? }
-```
-```python
-# app/api/routes/auth.py
-@router.post("/auth/school-lookup")
-def lookup_school(body: SchoolLookupIn) -> SchoolLookupOut:
-    school = db.find_school_by_email(body.email)     # schools 조회
-    return SchoolLookupOut(supported=school is not None,
-                           school_name=school["name"] if school else None)
-```
-
-| 파라미터 | 타입 | 설명 |
-|---|---|---|
-| `email` | `str` | `@` 뒤를 잘라 `schools.email_domain`과 대조 |
-
-**하는 일** — 오타로 엉뚱한 학교에 민원이 올라가는 사고를 가입 단계에서 막는다.
-학교 선택 드롭다운이 없는 이유가 이것이다. **인증 불필요** (가입 전에 부른다).
-
-**반환** `{ "supported": true, "school_name": "조선대학교" }` / `{ "supported": false }`
-
----
-
 #### 2. `signup` — 가입
 
 ```js
-export async function signup(email, password, role, adminCode = null) { ... }   // → { user_id }
+/**
+ * 가입 화면: 학교 드롭다운 · 이메일 아이디 · 비밀번호 · 교직원 여부 토글 · (토글 시) 학교 코드
+ * @param {string}  email     프론트가 `아이디 + '@' + 고른학교.email_domain`으로 조립
+ * @param {boolean} isStaff   교직원 여부 토글. true면 adminCode 필수
+ */
+export async function signup(email, password, isStaff, adminCode = null) { ... }   // → { user_id }
 ```
 ```python
 @router.post("/auth/signup", status_code=201)
 def signup(body: SignupIn, response: Response) -> SignupOut:
     school = db.find_school_by_email(body.email)        # 없으면 400 UNSUPPORTED_DOMAIN
-    if body.role == "admin":
+    role = "admin" if body.is_staff else "student"      # 화면의 토글 → DB의 role
+    if body.is_staff:
         db.verify_admin_code(school["id"], body.admin_code)   # 불일치면 400
-    user_id = db.create_user(school["id"], body.email, body.password, body.role)
+    user_id = db.create_user(school["id"], body.email, body.password, role)
     response.set_cookie(...)                            # 가입 즉시 로그인
 ```
 
 | 파라미터 | 타입 | 필수 | 설명 |
 |---|---|---|---|
-| `email` | `str` | ✓ | 도메인으로 학교가 정해진다 |
+| `email` | `str` | ✓ | 프론트가 `아이디@고른학교도메인`으로 조립. 도메인으로 학교가 정해진다 |
 | `password` | `str` | ✓ | 서버에서 해시. 평문 저장 안 함 |
-| `role` | `'student' \| 'admin'` | ✓ | |
-| `admin_code` | `str` | `role='admin'`일 때만 | `admin_codes.code`와 대조 |
+| `is_staff` | `bool` | ✓ | 화면의 **교직원 여부 토글**. 서버가 `role`로 옮긴다 (`true` → `admin`) |
+| `admin_code` | `str` | `is_staff=true`일 때만 | 그 학교의 `admin_codes.code`와 대조 |
+
+**화면은 "교직원 여부", DB는 `role`.** 토글이 꺼져 있으면 학생이다.
+토글을 켜면 **학교 코드 입력칸이 펼쳐지고**, 코드를 채워야 가입 버튼이 눌린다.
 
 **건드리는 것** — `schools` 조회 → `admin_codes` 조회 → `users` INSERT → 세션 생성
 
 **하는 일** — `school_id`를 **요청에서 받지 않는다.** 이메일 도메인으로 서버가 정한다.
-같은 학교 이메일이라는 사실만으로 관리자가 되지는 못한다 — 코드가 따로 필요하다.
+프론트가 드롭다운으로 도메인을 붙여줬더라도 **서버는 그 문자열을 다시 도메인으로 조회한다** —
+화면이 무엇을 보여줬든 학교를 정하는 근거는 도메인 하나다.
+
+같은 학교 이메일이라는 사실만으로 교직원이 되지는 못한다 — 코드가 따로 필요하다.
+토글은 화면의 편의일 뿐이고 **실제 판정은 코드 대조다.** 토글만 켜고 코드가 틀리면 400이다.
 
 **오류** `400 UNSUPPORTED_DOMAIN` · `409 EMAIL_TAKEN` · `400 INVALID_ADMIN_CODE`
 
@@ -947,15 +935,36 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 
 ---
 
+## 4-0. 화면과 API 대응
+
+| 화면 | 요소 | 무엇을 부르나 |
+|---|---|---|
+| **로딩** | — | `getMe()` (#5). role을 알기 전에는 아무 화면도 못 그린다 |
+| **로그인** | 이메일 · 비밀번호 | `login(email, password)` (#3) |
+| | 회원가입 버튼 | 화면 전환만. API 없음 |
+| **회원가입** | 학교 드롭다운 (검색·별칭) | `listSchools()` (#1) — 화면 진입 시 한 번 |
+| | 이메일 아이디 + 도메인(잠김) | 프론트가 조립해 `signup`에 넘긴다 |
+| | 비밀번호 | 〃 |
+| | **교직원 여부 토글** | 켜면 코드 칸이 펼쳐진다. 화면 상태일 뿐 API 없음 |
+| | 학교 코드 (토글 시) | `signup(email, pw, true, adminCode)` (#2) |
+| | 가입 버튼 | `signup` → 성공하면 **바로 로그인 상태**가 되어 첫 화면으로 |
+
+**가입 성공 시 다시 로그인하지 않는다.** 서버가 `Set-Cookie`를 함께 내려주므로
+`login`을 부를 필요 없이 곧장 `getMe()` 이후 흐름으로 들어간다.
+
+---
+
 ## 4-1. 앱이 시작하고 끝나는 흐름
 
 **진입**
 ```
-1. getMe()
+1. 로딩 화면
+2. getMe()
    ├─ 401 → 로그인 화면
    └─ 성공 → role로 갈린다
-              student → listComplaints() + 작성 화면 준비 (startDraft는 "새 민원"을 누를 때)
+              student → listComplaints() + 작성 화면 (startDraft는 "새 민원"을 누를 때)
               admin   → getStats() + listComplaints()
+3. 첫 화면 데이터가 오면 로딩을 걷는다
 ```
 
 `getMe()`를 가장 먼저 부른다. **role이 화면 전체를 정하므로 그 전에는 아무것도 그리지 않는다.**
@@ -982,7 +991,7 @@ logout()  →  서버가 Redis 세션 삭제 + 쿠키 만료
 ```
 src/api/
 ├─ client.js      fetch 래퍼 — credentials·헤더·오류 정규화. 여기만 fetch를 안다
-├─ auth.js        8개
+├─ auth.js        7개
 ├─ draft.js       4개
 ├─ board.js       4개
 └─ admin.js       8개
@@ -1125,11 +1134,10 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 카테고리를 추측한다.** 실제로는 Bedrock이 도구 호출로 정한다 — 카테고리는 서버가 주는 값이지
 프론트가 만드는 값이 아니다.
 
-### 8.0 최신 시안이 제기하는 것 — 가입 방식
+### 8.0 가입 방식 — 시안을 따른다 (결정됨)
 
-최신 시안은 **학교를 먼저 고르고**(검색 + 별칭) 도메인이 자동으로 붙은 뒤
-**이메일 아이디만** 입력한다. 정본은 반대로 **이메일 전체를 입력하면 도메인으로 학교가 정해진다**
-(학교 선택 UI 없음).
+**학교를 먼저 고르고**(검색 + 별칭) 도메인이 자동으로 붙은 뒤 **이메일 아이디만** 입력한다.
+초기 정본은 이메일 전체를 입력해 도메인으로 학교를 추론하는 방식이었으나, 시안 쪽으로 정했다.
 
 | | 정본 방식 | 최신 시안 방식 |
 |---|---|---|
@@ -1143,8 +1151,14 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 게시판에 올라간다")는 최신 시안에는 해당하지 않는다. 학교를 고르면 **도메인이 잠기므로**
 다른 학교 이메일을 넣을 수 없기 때문이다.
 
-**어느 쪽이든 `listSchools`(#0)는 필요하다.** 정본 방식에서도 "우리 학교가 지원되나"를
-가입 전에 보여줘야 한다. 다만 최신 시안 방식을 택하면 **정본의 US-1.1·1.3 서술을 고쳐야 한다.**
+**결정 근거**: 도메인이 잠기므로 오타도, 다른 학교로 잘못 등록되는 일도 불가능하다.
+지원 학교를 처음부터 볼 수 있어 "다 치고 나서야 막히는" 좌절이 없다.
+칸이 하나 늘지만 각 칸이 더 단순해진다.
+
+**서버 쪽은 바뀌지 않는다.** 프론트가 이메일을 조립해 보내고 서버는 도메인으로 학교를 정한다 —
+화면이 무엇을 보여줬든 근거는 도메인 하나다. 그래서 `signup` 계약이 그대로다.
+
+`lookupSchool`은 없앴다. 드롭다운이 이미 학교를 알려주므로 이메일에서 역추론할 이유가 없다.
 
 
 
@@ -1207,9 +1221,9 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 
 | US | 내용 | 어디서 |
 |---|---|---|
-| 1.1 | 이메일 도메인으로 학교 자동 매칭 | #1 `lookupSchool` · #2 `signup` |
-| 1.2 | 관리자 코드 | #2 `admin_code` |
-| 1.3 | 미등록 도메인 차단 | #1 `supported:false` · #2 `400 UNSUPPORTED_DOMAIN` |
+| 1.1 | 학교 소속 결정 | #1 `listSchools`(드롭다운) · #2 `signup`(도메인으로 서버가 확정) |
+| 1.2 | 관리자 코드 | #2 `is_staff` 토글 + `admin_code` |
+| 1.3 | 미등록 도메인 차단 | 드롭다운에 없는 학교는 고를 수 없다 · #2 `400 UNSUPPORTED_DOMAIN` |
 | 1.4 | 내 학교 데이터만 | 0장 학교 격리 — 세션 `school_id`로 전부 필터 |
 | 1.5 | 비밀번호 변경 | #6 |
 | 1.6 | 탈퇴 시 데이터 정리 | #7 (민원은 익명으로 남고 소유자만 `NULL`) |
