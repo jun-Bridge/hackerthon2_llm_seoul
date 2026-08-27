@@ -43,3 +43,4 @@ requirements.md 초안 작성 시작 — 슬롯 전부 TBD.
 - requirements 슬롯 6(데이터·계약) 초안 기입: conversation/message, document/document_version, HTTP API 목록, LLM 인터페이스.
 - **핵심 규칙 확정**: 문서 편집은 항상 새 버전을 만든다. 복원도 새 버전. 원본 불변 — 백엔드(`canvas_service`)와 프론트(`canvas/`) 양쪽 README에 동일하게 명시.
 - 새로 드러난 미정: 인증·사용자 모델(문서 소유자 식별), 문서 본문 포맷, 버전 보관 정책(스냅샷 vs diff).
+- git remote를 HTTPS → SSH(`git@github.com:jun-Bridge/hackerthon2_llm_seoul.git`)로 변경. 이 머신에 자격증명 헬퍼가 없어 HTTPS push가 막혔고, `~/.ssh/id_ed25519`가 이미 jun-Bridge로 인증됨. `main` push 완료.
