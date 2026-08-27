@@ -1,5 +1,16 @@
 # 민원 작성 도우미 — 제안서
 
+> ## 이 문서의 위치
+>
+> **대회(Kiro) 정본은 `.kiro/specs/complaint-assistant/`다.**
+> 이 제안서는 **Track B — FastAPI + React 확장 구조**를 설명한다. 대회 후에 짓는 쪽이다.
+>
+> 지금 구현하는 것은 Track A(Streamlit + Bedrock)이고, 그쪽 태스크 목록은 `.kiro/specs/complaint-assistant/tasks.md`에 있다.
+> 다만 **설계 원칙은 두 트랙이 같다** — 두 코어 분리, LLM 소유 금지, 제안→diff→승인, 줄 단위 문서.
+> 아래 "어떻게 동작하나"가 그 원칙의 근거이므로 Track A를 만드는 사람도 읽을 값어치가 있다.
+
+---
+
 _2026-08-27_
 
 ---
@@ -274,8 +285,8 @@ Postgres에는 확정된 본문만 남는다.
 ## 스택
 
 프론트 **React + Vite + TypeScript** (시안 Figma) · 백엔드 **Python + FastAPI** ·
-LLM **로컬 gpt-oss-120b** (OpenAI 호환 엔드포인트, 도구 호출) ·
-**PostgreSQL** + **Redis** · **Docker**(로컬 개발) · 배포 **AWS**(Kiro IDE 담당, 이 저장소 밖)
+LLM **AWS Bedrock** (Claude 계열, 도구 호출) ·
+**PostgreSQL** + **Redis** · **Docker**(로컬 개발) · 배포 **AWS**
 
 **인증은 HttpOnly 쿠키 세션** + Redis. 이유는 SSE다 — `EventSource`는 커스텀 헤더를 못 붙이는데
 쿠키는 자동으로 실린다. 부수로 토큰이 JS에 노출되지 않고, 서버가 세션을 지울 수 있어
@@ -308,7 +319,7 @@ LLM **로컬 gpt-oss-120b** (OpenAI 호환 엔드포인트, 도구 호출) ·
 
 **착수 전** — LLM의 도구 호출 지원 여부 (M0에서 실측)
 
-**만들면서** — 여러 줄에 걸친 마크다운(코드 펜스·표) 보호 방식 · 요약용 모델(같은 120B? 더 작은 것?) ·
+**만들면서** — 여러 줄에 걸친 마크다운(코드 펜스·표) 보호 방식 · 요약용 모델(본 응답과 같은 것? 더 싼 것?) ·
 Redis 유실 시 사용자 통지 여부 · 비로그인 체험 지원 여부 · 호출 빈도 제한
 
 **실측 후** — 버퍼 크기, 요약 주기, 되돌리기 깊이, 제안 TTL, 저장 대기 시간, 잠금 TTL,
@@ -340,9 +351,10 @@ LLM의 일이 "글쓰기"에서 **"칸 채우기"**로 바뀐다. 양식은 "섹
 
 ## 지금 상태와 다음 단계
 
-- `docs/requirements.md` — 이 제안서의 상세판. 스키마·API·완료 기준 전부.
-  **구현 중 판단이 갈리면 여기로 돌아온다.**
+- `.kiro/specs/complaint-assistant/` — **대회 정본.** User Story · 이중 트랙 설계 · 38개 태스크
+- `docs/requirements.md` — Track B 상세판. 스키마·API·완료 기준 전부
 - `docs/dev-log.md` — 결정의 배경과 과정
+- `KIRO_SPEC.md` — 두 트랙과 문서들의 관계
 - 디렉토리 골격과 폴더별 문서는 이미 잡혀 있다. 각 폴더 `README.md`에 무엇을 구현할지 적혀 있다.
 
-**다음**: 이 제안서에 합의하면 마일스톤을 태스크로 쪼개 나눠 잡는다.
+**다음**: Track A부터 만든다. 태스크는 `.kiro/specs/complaint-assistant/tasks.md`에 이미 쪼개져 있다.

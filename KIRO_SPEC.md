@@ -55,16 +55,18 @@ streamlit run app.py
 ## 문서 관계
 
 ```
-docs/                           # 전체 설계 (독립)
-├─ requirements.md              # FastAPI + React 전체
-├─ proposal.md                  # 제안서
-└─ dev-log.md                   # 결정 과정
-
-.kiro/specs/complaint-assistant/  # Kiro spec (대회용)
+.kiro/specs/complaint-assistant/  # ★ 대회 정본 — 어긋나면 이쪽이 이긴다
 ├─ requirements.md              # User Stories (M0~M6)
 ├─ design.md                    # 이중 트랙 아키텍처
 └─ tasks.md                     # 38개 구체적 태스크
+
+docs/                           # Track B 설계 (대회 후)
+├─ requirements.md              # FastAPI + React 상세
+├─ proposal.md                  # 제안서
+└─ dev-log.md                   # 결정 과정
 ```
+
+`docs/kiro_*.md`에 있던 사본은 지웠다. **같은 내용을 두 벌 두면 한쪽만 고쳐지고 어느 게 맞는지 알 수 없게 된다.**
 
 **둘의 관계**: Kiro spec은 docs의 **실행 가능한 부분집합**입니다.
 - Track A = Kiro spec 전체

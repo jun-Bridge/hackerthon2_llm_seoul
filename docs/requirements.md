@@ -1,5 +1,25 @@
 # 민원 작성 도우미 — 요구사항 · 개발 계획
 
+> ## 이 문서의 위치
+>
+> **대회(Kiro) 정본은 `.kiro/specs/complaint-assistant/`다.** 지금 실제로 구현하는 것은 그쪽이다.
+>
+> 이 문서는 **Track B — FastAPI + React 확장 구조**의 설계다. 대회 후에 짓는다.
+> 두 트랙이 어긋나면 **`.kiro/specs/`가 이긴다.**
+>
+> | | Track A (대회 제출) | Track B (이 문서) |
+> |---|---|---|
+> | 정본 | `.kiro/specs/complaint-assistant/` | `docs/requirements.md` |
+> | 스택 | Streamlit + Bedrock + FAISS | FastAPI + React + PostgreSQL + Redis + Bedrock |
+> | 배포 | EC2 | 미정 |
+> | 시점 | 지금 | 대회 후 |
+>
+> **두 트랙이 공유하는 원칙** — 두 코어 분리 · LLM 소유 금지 · 제안→diff→승인 · 줄 단위 문서.
+> 이 문서의 5~7장이 그 원칙의 상세 서술이고, Track A는 그것을 Streamlit 위에 축약해 구현한다.
+> 전체 구조 설명은 루트 `KIRO_SPEC.md`.
+
+---
+
 _2026-08-27 · 상태: 검토 중_
 
 이 문서는 **무엇을 왜 만드는지의 단일 진실원천(SSoT)** 이다.
@@ -498,7 +518,7 @@ POST   /sessions/{sid}/document/redo
 |---|---|
 | 프론트엔드 | React + Vite + TypeScript (시안은 Figma) |
 | 백엔드 | Python + FastAPI |
-| LLM | 로컬 gpt-oss-120b, OpenAI 호환 엔드포인트로 서빙. **도구 호출 사용** |
+| LLM | **AWS Bedrock** (Claude 계열). **도구 호출 사용** |
 | 영속 저장 | PostgreSQL |
 | 휘발 저장 | Redis |
 | 컨테이너 | Docker (이 저장소의 `docker/`는 로컬 개발용) |
@@ -507,7 +527,8 @@ POST   /sessions/{sid}/document/redo
 ### 제약
 
 - **도구 호출이 전제다.** 캔버스 전체가 그 위에 서 있다. 착수 전 실측으로 확인한다.
-  모델은 사양을 보고 바꿀 수 있으므로 LLM 클라이언트 인터페이스 뒤에 가둔다 — 교체가 그 안에서 끝나야 한다.
+  (Track A의 `M0-TASK-001`이 Bedrock 도구 호출을 실측한다. 그 결과가 두 트랙에 함께 적용된다.)
+  모델은 바꿀 수 있으므로 LLM 클라이언트 인터페이스 뒤에 가둔다 — 교체가 그 안에서 끝나야 한다.
 - **인증은 HttpOnly 쿠키 세션.** 세션 id를 쿠키에 싣고 실체는 Redis에 둔다.
   - `EventSource`는 커스텀 헤더를 붙이지 못한다. 쿠키는 자동으로 실리므로 SSE가 그대로 인증된다.
   - 토큰이 JS에 노출되지 않는다.
@@ -530,8 +551,9 @@ POST   /sessions/{sid}/document/redo
 
 ### M0 — 스켈레톤과 실측
 
-- [ ] **LLM 엔드포인트에 도구를 붙여 호출하면 도구 호출이 규격대로 돌아온다** (probe 스크립트로 실측)
+- [ ] **Bedrock에 도구를 붙여 호출하면 도구 호출이 규격대로 돌아온다** (probe 스크립트로 실측)
       — **이것이 첫 태스크다.** 실패하면 구조화 출력 파싱으로 방향을 틀어야 하므로 뒤 작업을 시작하지 않는다.
+      Track A의 `M0-TASK-001`과 같은 검증이므로 한 번만 하면 된다.
 - [ ] `docker compose -f docker/compose.dev.yml up`으로 postgres·redis·backend·frontend가 뜬다
 - [ ] `GET /health`가 200과 함께 세 곳의 도달 여부를 반환한다
 - [ ] LLM이 죽어 있어도 서버는 뜨고 `/health`가 그 사실을 알려준다
@@ -614,8 +636,8 @@ POST   /sessions/{sid}/document/redo
 
 - **여러 줄에 걸친 마크다운** — 코드 펜스, 표, 여러 줄 인용은 줄 여러 개로 나뉜다.
   LLM이 그중 한 줄만 고치면 구조가 깨질 수 있다. 도구 설명으로 유도할지, 검증으로 막을지.
-- **요약용 모델** — 본 응답과 같은 모델을 쓸지, 더 작은 걸 쓸지.
-  같은 걸 쓰면 요약할 때마다 120B를 한 번 더 태운다.
+- **요약용 모델** — 본 응답과 같은 모델을 쓸지, 더 싼 걸 쓸지.
+  같은 걸 쓰면 요약할 때마다 호출 비용이 한 번 더 든다.
 - **Redis가 죽었을 때** — Postgres에서 복원하면 마지막 저장 시점으로 돌아간다.
   사용자에게 알릴지 조용히 넘어갈지.
 - **비로그인 체험** — 로그인 없이 써볼 수 있게 할지, 로그인 필수로 갈지.
