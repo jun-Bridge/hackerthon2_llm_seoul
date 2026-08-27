@@ -31,3 +31,15 @@ requirements.md 초안 작성 시작 — 슬롯 전부 TBD.
 - **캔버스 정의 확정: 편집형**(ChatGPT/Claude Canvas형). LLM 생성 문서를 옆 패널에서 사람이 편집 + 선택 영역만 재요청.
   → Postgres 스키마에 문서·버전이 필요. 프론트에 `components/canvas/{editor,revision}` 분리.
   → 파생 미정: 문서 포맷(md/richtext), 버전 보관 정책(스냅샷 vs diff), 동시 편집 여부.
+
+## [2026-08-27] 구조 재검토 (서비스 목표 대조) · 폴더별 문서화 · 브랜치 main
+- 브랜치 `master` → `main` 개명 (원격 GitHub 기본값에 맞춤). `gh` CLI는 이 머신에 없음.
+- **구조를 목표(채팅 + 편집형 캔버스 + 스트리밍 + PG/Redis)에 대고 재검토 → 구멍 4개 발견, 추가:**
+  1. `app/llm/prompts/` — 편집형 캔버스는 "선택 영역 재작성" 프롬프트가 핵심 자산이다. 서비스 코드에 문자열로 박히면 문구 수정이 로직 변경이 된다.
+  2. `frontend/src/store/` — 대화와 캔버스가 상태를 공유한다("문서로 만들기" → 캔버스 열림). prop drilling으로는 안 된다.
+  3. `frontend/src/types/` — 백엔드 `schemas/`와 짝. 없으면 컴포넌트마다 응답 모양을 추측한다.
+  4. `frontend/src/assets/` — Figma 익스포트 원본(`resource/`)과 번들 에셋을 분리.
+- **폴더별 `README.md` 28개 작성.** 각 폴더가 무엇을 구현할지 + 지켜야 할 경계 규칙. 루트 README 트리는 지도, 폴더 README가 계약.
+- requirements 슬롯 6(데이터·계약) 초안 기입: conversation/message, document/document_version, HTTP API 목록, LLM 인터페이스.
+- **핵심 규칙 확정**: 문서 편집은 항상 새 버전을 만든다. 복원도 새 버전. 원본 불변 — 백엔드(`canvas_service`)와 프론트(`canvas/`) 양쪽 README에 동일하게 명시.
+- 새로 드러난 미정: 인증·사용자 모델(문서 소유자 식별), 문서 본문 포맷, 버전 보관 정책(스냅샷 vs diff).

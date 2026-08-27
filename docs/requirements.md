@@ -24,7 +24,27 @@ TBD
 TBD
 
 ## 6. 데이터·계약 (스키마·API·인터페이스)
-TBD
+> 초안. 목적·유스케이스(슬롯 1·4) 확정 시 재검토.
+
+**PostgreSQL**
+- `conversation` ──< `message` (role, content, created_at)
+- `document` ──< `document_version` (본문 스냅샷, 생성 주체: human|llm, created_at)
+- `document.current_version_id` → `document_version`
+- 편집은 **항상 새 버전**을 만든다. 복원도 새 버전으로 쌓는다(원본 불변).
+
+**Redis**
+- 세션 상태 · LLM 토큰 스트림 버퍼(SSE 재연결용) · 단기 캐시. **잃어도 되는 것만.**
+
+**HTTP API (초안)**
+- `GET  /health`
+- `POST /chat` · `GET /chat/{id}/stream` (SSE)
+- `GET|POST /documents` · `GET /documents/{id}` · `GET /documents/{id}/versions` · `POST /documents/{id}/restore`
+- `POST /documents/{id}/edit-selection` — 선택 범위(offset) + 지시문 → 새 버전
+
+**LLM 인터페이스**
+- `app/llm/base.py`의 `complete()` / `stream()`만 서비스에 노출. 구현은 OpenAI 호환 엔드포인트(`LLM_BASE_URL`).
+
+**미정**: 인증·사용자 모델(문서 소유자를 어떻게 식별하나), 문서 본문 포맷(마크다운/리치텍스트), 버전 보관 정책(전문 스냅샷 vs diff).
 
 ## 7. 기술 스택·환경
 - **백엔드**: Python + FastAPI. `src/backend/`

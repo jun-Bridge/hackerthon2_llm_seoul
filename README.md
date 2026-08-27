@@ -38,6 +38,7 @@
     │   │   │       ├── session_store.py
     │   │   │       └── stream_buffer.py
     │   │   ├── llm/         LLM 클라이언트 추상화 (base + gpt-oss 구현)
+    │   │   │   └── prompts/    프롬프트 템플릿 (코드에서 분리)
     │   │   ├── schemas/     Pydantic 요청·응답 계약
     │   │   └── services/    도메인 로직 (chat / document·canvas)
     │   └── tests/
@@ -53,10 +54,15 @@
             │   │   └── revision/  버전 히스토리·diff·되돌리기
             │   ├── chat/      대화 UI
             │   └── common/    공용 프리미티브
-            ├── hooks/
-            ├── pages/
-            └── styles/
+            ├── assets/     번들에 들어가는 아이콘·폰트
+            ├── hooks/      useChatStream · useDocument · useSelection
+            ├── pages/      WorkspacePage (좌 대화 · 우 캔버스)
+            ├── store/      chat/document/ui 전역 상태
+            ├── styles/     토큰(Figma 기준) · 전역 CSS
+            └── types/      백엔드 schemas와 짝 맞는 TS 타입
 ```
+
+**각 폴더의 `README.md`에 그 폴더가 무엇을 구현하는지 적혀 있다.** 위 트리는 지도이고, 세부 계약은 폴더 README가 갖는다.
 
 ### 경계 규약
 - `api/routes/`는 요청 파싱 → `services/` 호출 → 응답 직렬화만. 비즈니스 로직은 `services/`.
@@ -64,6 +70,15 @@
 - Postgres와 Redis는 `db/` 아래 **각자 독립 모듈**. 한쪽 모듈이 다른 쪽을 import하지 않는다 — 둘을 함께 쓰는 조합은 `services/`에서.
 - LLM 호출은 전부 `llm/base.py` 인터페이스를 거친다. 모델·서빙 백엔드 교체가 `llm/` 안에서 끝나야 한다.
 - 시크릿은 `.env`만. 하드코딩 금지. `.env.example`은 키 이름·형식만.
+
+## 데이터 모델 (초안)
+
+```
+conversation ──< message
+document ──< document_version        (편집형 캔버스: 편집은 항상 새 버전)
+document.current_version_id ──> document_version
+```
+Redis: 세션 · 스트림 버퍼(SSE 재연결) · 단기 캐시.
 
 ## 개발
 
