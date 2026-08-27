@@ -98,12 +98,12 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 | 코드 | HTTP | 언제 | 프론트가 할 일 |
 |---|---|---|---|
 | `UNSUPPORTED_DOMAIN` | 400 | 등록되지 않은 이메일 도메인 | 가입 버튼 비활성 + 안내 |
-| `EMAIL_TAKEN` | 409 | 이미 가입된 이메일 | 이메일 칸에 표시 |
-| `INVALID_ADMIN_CODE` | 400 | 관리자 코드 불일치 | 코드 칸에 표시 |
+| `EMAIL_TAKEN` | 409 | 이미 가입된 이메일 | **이메일 칸에 경고** + 로그인 링크 |
+| `INVALID_ADMIN_CODE` | 400 | 코드를 넣었는데 안 맞음 | **코드 칸에 경고.** 비우면 학생이 된다고 안내 |
 | `VALIDATION_FAILED` | 400 | 형식·길이 규칙 위반 | 해당 입력칸에 표시 |
 | `INVALID_CREDENTIALS` | 401 | 로그인 실패 | 폼에 표시 (계정 존재 여부는 구분하지 않는다) |
 | `UNAUTHENTICATED` | 401 | 미로그인·세션 만료 | **`client.js`가 처리.** 로그인 화면으로 |
-| `WRONG_PASSWORD` | 401 | 비밀번호 재확인 실패 (변경·탈퇴·철회) | 비밀번호 칸에 표시 |
+| `WRONG_PASSWORD` | 401 | 비밀번호 재확인 실패 (변경·탈퇴·철회) | **비밀번호 칸에 경고.** 창은 열어둔 채 다시 입력받는다 |
 | `FORBIDDEN_ROLE` | 403 | 역할에 없는 API 호출 | 일어나면 안 되는 일. 화면 분기 버그 |
 | `NOT_OWNER` | 403 | 내 것이 아닌 초안·민원 | 목록 새로고침 |
 | `NOT_FOUND` | 404 | 없거나 볼 권한 없음 (철회 포함) | 목록으로 돌려보냄 |
@@ -286,19 +286,24 @@ ALTER TABLE schools ADD COLUMN aliases TEXT[];   -- PostgreSQL 배열
 
 ```js
 /**
- * 가입 화면: 학교 드롭다운 · 이메일 아이디 · 비밀번호 · 교직원 여부 토글 · (토글 시) 학교 코드
+ * 가입 화면: 학교 드롭다운 · 이메일 아이디 · 비밀번호 · 학교 코드(선택)
  * @param {string}  email     프론트가 `아이디 + '@' + 고른학교.email_domain`으로 조립
- * @param {boolean} isStaff   교직원 여부 토글. true면 adminCode 필수
+ * @param {?string} adminCode  비우면 학생. 채우면 검증해서 교직원 — 틀리면 400
  */
-export async function signup(email, password, isStaff, adminCode = null) { ... }   // → { user_id }
+export async function signup(email, password, adminCode = null) { ... }   // → { user_id, role }
 ```
 ```python
 @router.post("/auth/signup", status_code=201)
 def signup(body: SignupIn, response: Response) -> SignupOut:
     school = db.find_school_by_email(body.email)        # 없으면 400 UNSUPPORTED_DOMAIN
-    role = "admin" if body.is_staff else "student"      # 화면의 토글 → DB의 role
-    if body.is_staff:
-        db.verify_admin_code(school["id"], body.admin_code)   # 불일치면 400
+    # 역할은 코드가 정한다. 클라이언트가 "나 교직원"이라고 주장할 방법이 없다
+    code = (body.admin_code or "").strip()
+    if not code:
+        role = "student"
+    elif db.verify_admin_code(school["id"], code):
+        role = "admin"
+    else:
+        raise BadRequest("INVALID_ADMIN_CODE")     # 넣었는데 안 맞으면 막는다
     user_id = db.create_user(school["id"], body.email, body.password, role)
     response.set_cookie(...)                            # 가입 즉시 로그인
 ```
@@ -307,11 +312,23 @@ def signup(body: SignupIn, response: Response) -> SignupOut:
 |---|---|---|---|
 | `email` | `str` | ✓ | 프론트가 `아이디@고른학교도메인`으로 조립. 도메인으로 학교가 정해진다 |
 | `password` | `str` | ✓ | 서버에서 해시. 평문 저장 안 함 |
-| `is_staff` | `bool` | ✓ | 화면의 **교직원 여부 토글**. 서버가 `role`로 옮긴다 (`true` → `admin`) |
-| `admin_code` | `str` | `is_staff=true`일 때만 | 그 학교의 `admin_codes.code`와 대조 |
+| `admin_code` | `str?` | ✗ | **비우면 학생.** 채우면 그 학교의 `admin_codes.code`와 대조 |
 
-**화면은 "교직원 여부", DB는 `role`.** 토글이 꺼져 있으면 학생이다.
-토글을 켜면 **학교 코드 입력칸이 펼쳐지고**, 코드를 채워야 가입 버튼이 눌린다.
+**역할을 코드가 정한다.**
+
+| 코드 칸 | 결과 |
+|---|---|
+| 비어 있음 (공백만 있어도) | `student`로 가입 |
+| 채워졌고 그 학교 코드와 일치 | `admin`으로 가입 |
+| 채워졌는데 안 맞음 | **`400 INVALID_ADMIN_CODE`** — 가입되지 않는다 |
+
+**"교직원입니다" 같은 불린을 받지 않는다.** 받으면 클라이언트가 스스로 관리자라고 주장할 수 있다.
+코드는 서버만 아는 값이라 그것 하나로 판정하면 주장할 여지가 없다.
+
+**틀린 코드를 조용히 학생으로 강등시키지 않는다.** 그러면 관리자로 가입된 줄 알고
+관리자 화면을 찾다 헤맨다. 막고 알린다.
+
+**응답에 `role`을 함께 준다.** 가입 직후 어느 화면으로 갈지 프론트가 알아야 한다.
 
 **건드리는 것** — `schools` 조회 → `admin_codes` 조회 → `users` INSERT → 세션 생성
 
@@ -322,7 +339,13 @@ def signup(body: SignupIn, response: Response) -> SignupOut:
 같은 학교 이메일이라는 사실만으로 교직원이 되지는 못한다 — 코드가 따로 필요하다.
 토글은 화면의 편의일 뿐이고 **실제 판정은 코드 대조다.** 토글만 켜고 코드가 틀리면 400이다.
 
-**오류** `400 UNSUPPORTED_DOMAIN` · `409 EMAIL_TAKEN` · `400 INVALID_ADMIN_CODE`
+**오류와 화면 표시**
+
+| 코드 | HTTP | 어디에 무엇을 |
+|---|---|---|
+| `UNSUPPORTED_DOMAIN` | 400 | 이메일 칸 아래 — "지원하지 않는 학교입니다" + 지원 학교 보기(#1) |
+| `EMAIL_TAKEN` | 409 | 이메일 칸 아래 — "이미 가입된 이메일입니다" + 로그인 화면 링크 |
+| `INVALID_ADMIN_CODE` | 400 | 코드 칸 아래 — "유효하지 않은 코드입니다. 비워두면 학생으로 가입됩니다" |
 
 ---
 
@@ -553,6 +576,16 @@ def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
 |---|---|---|
 | `draft_key` | `str` (경로) | 본문은 비어 있다 |
 
+**접수 전에 확인창을 띄운다.** 미리보기에서 "정식 접수"를 누르면 곧바로 올라가지 않고
+**"이대로 접수하시겠습니까?"** 확인창이 뜬다.
+
+| 버튼 | 동작 |
+|---|---|
+| 확인 | `submitDraft()` 호출 → 실제로 접수 |
+| 취소 | 아무것도 부르지 않는다. 미리보기가 그대로 남아 계속 고칠 수 있다 |
+
+게시판에 공개되는 동작이라 한 번 더 묻는다.
+
 **본문에 확정안을 싣지 않는 이유** — 프론트가 보낸 값을 그대로 저장하면 화면에서 값을 바꿔
 보낼 수 있다. **AI가 확정한 것과 접수된 것이 달라질 여지를 없앤다.**
 서버가 그 draft의 마지막 결과를 쓴다.
@@ -638,7 +671,22 @@ def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None:
 | 파라미터 | 타입 | 설명 |
 |---|---|---|
 | `id` | `int` (경로) | |
-| `password` | `str` (본문) | 본인 확인. 잘못 누르는 사고 방지 |
+| `password` | `str` (본문) | 본인 확인 |
+
+**철회 흐름 — 경고 먼저, 비밀번호 다음, 결과 알림**
+
+```
+철회 버튼
+  → 경고창: "철회하면 게시판과 관리자 목록 양쪽에서 즉시 사라지고
+             되돌릴 수 없습니다." + 비밀번호 입력칸
+  → [취소]  아무것도 부르지 않는다. 창만 닫힌다
+  → [철회하기]
+       ├─ 401 WRONG_PASSWORD → **창을 닫지 않는다.** 비밀번호 칸에 경고를 띄우고
+       │                        비운 뒤 다시 입력받는다
+       └─ 204 성공 → 창을 닫고 "삭제되었습니다" 알림 → 목록에서 사라진다
+```
+
+**비밀번호가 틀렸을 때 창을 닫으면 안 된다.** 처음부터 다시 여는 건 사고에 가깝다.
 
 **하드 삭제가 아니라 상태 전환이다.** 레코드는 남고 조회에서만 빠진다.
 게시판·관리자 목록 양쪽에서 즉시 사라진다.
@@ -945,9 +993,8 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 | **회원가입** | 학교 드롭다운 (검색·별칭) | `listSchools()` (#1) — 화면 진입 시 한 번 |
 | | 이메일 아이디 + 도메인(잠김) | 프론트가 조립해 `signup`에 넘긴다 |
 | | 비밀번호 | 〃 |
-| | **교직원 여부 토글** | 켜면 코드 칸이 펼쳐진다. 화면 상태일 뿐 API 없음 |
-| | 학교 코드 (토글 시) | `signup(email, pw, true, adminCode)` (#2) |
-| | 가입 버튼 | `signup` → 성공하면 **바로 로그인 상태**가 되어 첫 화면으로 |
+| | **학교 코드 (선택)** | 비우면 학생, 채우면 검증. 가입 시 함께 보낸다 |
+| | 가입 버튼 | `signup(email, pw, adminCode)` (#2) → 성공하면 **바로 로그인 상태** |
 
 **가입 성공 시 다시 로그인하지 않는다.** 서버가 `Set-Cookie`를 함께 내려주므로
 `login`을 부를 필요 없이 곧장 `getMe()` 이후 흐름으로 들어간다.
@@ -1222,7 +1269,7 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 | US | 내용 | 어디서 |
 |---|---|---|
 | 1.1 | 학교 소속 결정 | #1 `listSchools`(드롭다운) · #2 `signup`(도메인으로 서버가 확정) |
-| 1.2 | 관리자 코드 | #2 `is_staff` 토글 + `admin_code` |
+| 1.2 | 학교 코드로 역할 결정 | #2 `admin_code` — 비면 학생, 틀리면 400 |
 | 1.3 | 미등록 도메인 차단 | 드롭다운에 없는 학교는 고를 수 없다 · #2 `400 UNSUPPORTED_DOMAIN` |
 | 1.4 | 내 학교 데이터만 | 0장 학교 격리 — 세션 `school_id`로 전부 필터 |
 | 1.5 | 비밀번호 변경 | #6 |

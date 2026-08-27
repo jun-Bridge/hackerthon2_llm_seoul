@@ -525,6 +525,13 @@
       border-color: #9CA3AF;
     }
 
+    .auth-warn {
+      margin:6px 0 0; font-size:0.75rem; color:#B91C1C; display:none;
+      align-items:center; gap:5px;
+    }
+    .auth-warn.show { display:flex; }
+    .auth-warn .link { color:#2563EB; text-decoration:underline; cursor:pointer; }
+
     /* 상태 배지 — 미확인/확인/처리중/해결완료/보류/거절 */
     .status-pill { padding:3px 10px; border-radius:999px; font-size:0.72rem; font-weight:600; white-space:nowrap; }
     .status-미확인   { background:#FEF3C7; color:#92400E; }
@@ -1252,6 +1259,7 @@
             <input type="text" id="authEmailId" placeholder="student_id" required />
             <span class="auth-input-domain" id="authDomainSuffix">@kunsan.ac.kr</span>
           </div>
+          <p class="auth-warn" id="warnEmail"></p>
         </div>
 
         <!-- Password -->
@@ -1260,28 +1268,16 @@
           <div class="auth-input-wrap">
             <input type="password" id="authPassword" placeholder="••••••••" required />
           </div>
+          <p class="auth-warn" id="warnPassword"></p>
         </div>
 
-        <!-- 교직원 여부 토글 (회원가입에서만 보인다) -->
-        <div class="auth-input-group" id="staffToggleGroup" style="display:none;">
-          <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
-            <span style="display:flex; align-items:center; gap:8px;">
-              <i class="bi bi-building-gear"></i> 교직원이신가요?
-            </span>
-            <input type="checkbox" id="authIsStaff" onchange="toggleStaffCode(this.checked)"
-                   style="width:38px; height:20px; cursor:pointer;" />
-          </label>
-          <p style="margin:6px 0 0; font-size:0.75rem; color:#9CA3AF;">
-            체크하면 학교에서 배정받은 코드를 입력해야 합니다.
-          </p>
-        </div>
-
-        <!-- 학교 코드 (토글 시 펼쳐짐) -->
+        <!-- 학교 코드 (회원가입에서만. 비우면 학생) -->
         <div class="auth-input-group" id="staffCodeGroup" style="display:none;">
-          <label>학교 관리자 코드</label>
+          <label>학교 관리자 코드 <span style="color:#9CA3AF; font-weight:400;">(선택)</span></label>
           <div class="auth-input-wrap">
-            <input type="text" id="authAdminCode" placeholder="예: CSU-ADM-01" autocomplete="off" />
+            <input type="text" id="authAdminCode" placeholder="교직원만 입력 · 비우면 학생으로 가입" autocomplete="off" />
           </div>
+          <p class="auth-warn" id="warnAdminCode"></p>
         </div>
 
         <button type="submit" class="btn-auth-primary" id="authSubmitBtn">
@@ -1604,6 +1600,29 @@
   </div>
   <style>@keyframes bootspin { to { transform: rotate(360deg); } }</style>
 
+  <!-- SUBMIT CONFIRM MODAL — 접수는 게시판에 공개된다 -->
+  <div class="admin-modal-overlay" id="submitConfirmModal">
+    <div class="admin-modal-card" style="max-width:400px;">
+      <div class="admin-modal-head">
+        <h3>이대로 접수하시겠습니까?</h3>
+        <button class="admin-modal-close" onclick="closeSubmitConfirm()"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="admin-modal-body">
+        <p style="font-size:0.82rem; color:#6B7280; margin:0 0 4px;">
+          접수하면 <b>같은 학교 학생 전체에게 익명으로 공개</b>되고 시설관리처가 검토합니다.
+        </p>
+        <p style="font-size:0.78rem; color:#9CA3AF; margin:0;">
+          취소를 누르면 내용을 계속 고칠 수 있습니다.
+        </p>
+        <div class="admin-modal-actions" style="margin-top:14px;">
+          <button class="btn-action-small" onclick="closeSubmitConfirm()">취소</button>
+          <button class="btn-action-small" style="color:#15803D; background:#DCFCE7; border-color:#86EFAC;"
+                  onclick="confirmSubmit()">접수하기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- HOLD REASON MODAL — 사유가 없으면 보류가 성립하지 않는다 -->
   <div class="admin-modal-overlay" id="holdModal">
     <div class="admin-modal-card" style="max-width:440px;">
@@ -1657,11 +1676,12 @@
       </div>
       <div class="admin-modal-body">
         <p style="font-size:0.82rem; color:#6B7280; margin:0 0 10px;">
-          철회하면 게시판과 관리자 목록 양쪽에서 <b>즉시 사라집니다.</b><br>
+          철회하면 게시판과 관리자 목록 양쪽에서 <b>즉시 사라지고 되돌릴 수 없습니다.</b><br>
           본인 확인을 위해 비밀번호를 입력해주세요.
         </p>
-        <input type="password" id="withdrawPassword" placeholder="••••••••"
+        <input type="password" id="withdrawPassword" placeholder="••••••••" oninput="onWithdrawInput()"
                style="width:100%; padding:10px; border:1px solid #E5E7EB; border-radius:8px; font-size:0.9rem;" />
+        <p class="auth-warn" id="warnWithdraw"></p>
         <div class="admin-modal-actions" style="margin-top:12px;">
           <button class="btn-action-small" onclick="closeWithdrawModal()">취소</button>
           <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2;" onclick="submitWithdraw()">철회하기</button>
@@ -2014,12 +2034,32 @@
       }, 700);
     });
 
-    function toggleStaffCode(checked) {
-      authRole = checked ? 'admin' : 'student';
-      document.getElementById('staffCodeGroup').style.display = checked ? 'flex' : 'none';
-      const codeInput = document.getElementById('authAdminCode');
-      codeInput.required = checked;
-      if (!checked) codeInput.value = '';
+    // ── 데모용 서버 상태 ────────────────────────────────────
+    // 실제로는 admin_codes 테이블. 학교별로 배정된 코드다
+    const adminCodeDB = {
+      'kunsan.ac.kr': ['KSN-ADM-01', 'KSN-ADM-02'],
+      'jbnu.ac.kr':   ['JBNU-ADM-01'],
+      'jnu.ac.kr':    ['JNU-ADM-01'],
+      'chosun.ac.kr': ['CSU-ADM-01'],
+      'wku.ac.kr':    ['WKU-ADM-01'],
+      'jj.ac.kr':     ['JJ-ADM-01'],
+      'gist.ac.kr':   ['GIST-ADM-01'],
+      'mokpo.ac.kr':  ['MPU-ADM-01']
+    };
+    // 실제로는 users 테이블. 중복 검사용
+    const registeredEmails = new Set(['student1@chosun.ac.kr', 'admin@kunsan.ac.kr']);
+    let currentPassword = null;   // 철회 시 재확인용 (실제로는 서버가 해시로 대조)
+
+    function showWarn(id, html) {
+      const el = document.getElementById(id);
+      el.innerHTML = `<i class="bi bi-exclamation-circle"></i> ${html}`;
+      el.classList.add('show');
+    }
+    function clearWarns() {
+      ['warnEmail','warnPassword','warnAdminCode'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.classList.remove('show'); el.innerHTML = ''; }
+      });
     }
 
     function _unusedSelectAuthRole(role) {
@@ -2041,13 +2081,11 @@
       const questionEl = document.getElementById('authToggleQuestion');
       const linkEl = document.getElementById('authToggleLink');
 
-      // 교직원 토글은 회원가입에서만 보인다
-      document.getElementById('staffToggleGroup').style.display =
+      // 학교 코드칸은 회원가입에서만 보인다
+      document.getElementById('staffCodeGroup').style.display =
         (authMode === 'signup') ? 'flex' : 'none';
-      if (authMode === 'login') {
-        document.getElementById('authIsStaff').checked = false;
-        toggleStaffCode(false);
-      }
+      document.getElementById('authAdminCode').value = '';
+      clearWarns();
 
       if (authMode === 'signup') {
         titleEl.innerText = "학교 웹메일 회원가입";
@@ -2067,10 +2105,48 @@
     // Handle Login / Signup
     function handleAuthSubmit(e) {
       e.preventDefault();
-      const emailId = document.getElementById('authEmailId').value.trim();
+      clearWarns();
+      if (!selectedSchool) { showWarn('warnEmail', '먼저 학교를 선택해주세요.'); return; }
+
+      const emailId  = document.getElementById('authEmailId').value.trim();
+      const password = document.getElementById('authPassword').value;
+      const fullEmail = `${emailId}@${selectedSchool.domain}`;
+
+      if (authMode === 'signup') {
+        // ① 이메일 중복 (실제: 409 EMAIL_TAKEN)
+        if (registeredEmails.has(fullEmail)) {
+          showWarn('warnEmail',
+            `이미 가입된 이메일입니다. <span class="link" onclick="toggleAuthMode()">로그인하기</span>`);
+          return;
+        }
+        // ② 비밀번호 규칙 (실제: 400 VALIDATION_FAILED)
+        if (password.length < 8) {
+          showWarn('warnPassword', '비밀번호는 8자 이상이어야 합니다.');
+          return;
+        }
+        // ③ 학교 코드 — 비면 학생, 채웠으면 검증 (실제: 400 INVALID_ADMIN_CODE)
+        const code = document.getElementById('authAdminCode').value.trim();
+        if (code === '') {
+          authRole = 'student';
+        } else if ((adminCodeDB[selectedSchool.domain] || []).includes(code)) {
+          authRole = 'admin';
+        } else {
+          showWarn('warnAdminCode',
+            '유효하지 않은 코드입니다. 비워두면 학생으로 가입됩니다.');
+          return;
+        }
+        registeredEmails.add(fullEmail);
+        showToast(`${authRole === 'admin' ? '교직원' : '학생'}으로 가입되었습니다`);
+      } else {
+        // 로그인 — 데모라 비밀번호는 통과시킨다
+        authRole = fullEmail.startsWith('admin') ? 'admin' : 'student';
+      }
+
+      currentPassword = password;   // 철회 시 재확인용
 
       currentUser = {
         emailId: emailId,
+        email: fullEmail,
         domain: selectedSchool.domain,
         role: authRole,
         schoolName: selectedSchool.name
@@ -2372,7 +2448,7 @@
             • <b>요청 사항:</b> ${requestSummary}
           </div>
           <div style="display:flex; gap:8px; margin-top:4px; flex-wrap:wrap;">
-            <button type="button" class="btn-submit-doc" onclick="submitComplaint()">
+            <button type="button" class="btn-submit-doc" onclick="openSubmitConfirm()">
               <i class="bi bi-send-fill"></i> 시설팀에 접수하기
             </button>
             <button type="button" class="btn-back-step" onclick="goBackStep()">
@@ -2382,6 +2458,18 @@
         </div>
       `;
       appendBotMessage(cardHtml, [], false);
+    }
+
+    // 접수 전 확인창 — 게시판에 공개되는 동작이라 한 번 더 묻는다
+    function openSubmitConfirm() {
+      document.getElementById('submitConfirmModal').classList.add('open');
+    }
+    function closeSubmitConfirm() {
+      document.getElementById('submitConfirmModal').classList.remove('open');
+    }
+    function confirmSubmit() {
+      closeSubmitConfirm();
+      submitComplaint();          // 확인 → 실제 접수
     }
 
     // 접수 완료 처리
@@ -2783,16 +2871,31 @@
       document.getElementById('withdrawModal').classList.remove('open');
       withdrawTargetId = null;
     }
+    function onWithdrawInput() {
+      const el = document.getElementById('warnWithdraw');
+      el.classList.remove('show'); el.innerHTML = '';
+    }
+
     function submitWithdraw() {
       const pw = document.getElementById('withdrawPassword').value;
-      if (!pw) return;
+      const warn = document.getElementById('warnWithdraw');
+
+      // 비밀번호 불일치 → 창을 닫지 않는다 (실제: 401 WRONG_PASSWORD)
+      if (!pw || pw !== currentPassword) {
+        warn.innerHTML = '<i class="bi bi-exclamation-circle"></i> 비밀번호가 일치하지 않습니다.';
+        warn.classList.add('show');
+        document.getElementById('withdrawPassword').value = '';
+        document.getElementById('withdrawPassword').focus();
+        return;
+      }
+
       const item = complaintsData.find(c => c.id === withdrawTargetId);
       if (item) item.status = '철회';            // 하드 삭제가 아니라 상태 전환
       closeWithdrawModal();
       renderDrawerFeed();
       renderAdminTable();
       updateAdminStats();
-      showToast('민원을 철회했습니다');
+      showToast('삭제되었습니다');
     }
 
     function showToast(msg) {
