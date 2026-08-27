@@ -17,9 +17,18 @@
 ### 대회 제약 사항
 
 - **LLM**: AWS Bedrock (`global.anthropic.claude-sonnet-5`), 도구 호출로 민원 분류+변환
-- **프론트엔드**: Streamlit
-- **배포**: EC2 (팀 키 `hackathon-e1-t01-key.pem`)
-- **DB**: SQLite (계정/학교/민원 저장, 옵션 2 아키텍처 유지)
+- **배포**: EC2 (팀 키 `hackathon-e1-t01-key.pem`), **8501 포트**
+- **DB**: SQLite (계정/학교/민원 저장)
+
+> **프론트엔드는 제약이 아니다.** 대회 가이드는 함께 받은 Streamlit 코드(`app.py` 등 5개)를
+> "인프라와 Kiro 연동이 정상 동작하는지 확인하기 위한 **예시/테스트 코드**"라고 명시한다.
+> 8501은 그 예시를 띄우라고 알려준 포트일 뿐, 거기 무엇이 뜨는지는 정해져 있지 않다.
+>
+> **그래서 8501에 일반 웹서버(FastAPI + uvicorn)를 올린다.**
+> `uvicorn app.main:app --host 0.0.0.0 --port 8501`
+>
+> 이 판단으로 Streamlit의 제약 세 가지가 사라진다 —
+> 새로고침 시 로그인 유실, 서버에서 클라이언트로 밀어주기 불가, 상호작용마다 전체 재실행.
 
 ---
 
@@ -250,9 +259,12 @@ CREATE TABLE complaint_comments (
 
 ---
 
-## Session Container Rules (Streamlit `st.session_state`)
+## Session Container Rules (서버 세션 · 클라이언트 상태)
 
-Streamlit은 브라우저 탭(정확히는 브라우저 세션)마다 독립된 `st.session_state`를 서버 메모리에 들고 있다가, 재실행(rerun)될 때마다 복원해서 스크립트를 다시 실행하는 구조다. DB(영속)와 세션 컨테이너(휘발성)의 경계를 명확히 해야 새로고침·재로그인·탈퇴 시 무엇이 남고 무엇이 사라지는지 예측 가능해진다.
+로그인 세션은 **HttpOnly 쿠키 + 서버 저장소**다. 브라우저에는 세션 id만 있고 실체는 서버에 있어서
+**새로고침해도 로그인이 유지된다.** 이 점이 Streamlit 전제였던 이전 판과 결정적으로 다르다.
+
+DB(영속)와 휘발성 상태의 경계는 여전히 못박아야 한다 — 무엇이 새로고침을 견디고 무엇이 사라지는지.
 
 ### 컨테이너에 들어가는 것 (휘발성 — 탭 닫으면 소멸)
 
@@ -292,7 +304,7 @@ Streamlit은 브라우저 탭(정확히는 브라우저 세션)마다 독립된 
 
 ### M0 — 대회 환경 검증 (기존과 동일)
 - [ ] Bedrock API 호출 성공
-- [ ] EC2 인스턴스 SSH 접속 및 Streamlit 구동
+- [ ] EC2 인스턴스 SSH 접속 및 8501 포트로 서버 구동 (`uvicorn --port 8501`)
 - [ ] `requirements.txt` 패키지 설치 완료
 
 ### M1 — 계정 & 학교 시스템

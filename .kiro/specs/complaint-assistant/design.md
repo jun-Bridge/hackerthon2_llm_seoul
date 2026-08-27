@@ -9,7 +9,7 @@
 └───────────────────────────┬────────────────────────────────┘
                             │
                  ┌──────────▼──────────┐
-                 │  Streamlit App       │
+                 │  Web App (FastAPI)   │
                  │  (역할별 화면 분기)   │
                  └──────────┬──────────┘
                             │
@@ -166,7 +166,7 @@ hackerthon2_llm_1/
 │  ├─ app.db
 │  └─ backups/
 │
-├─ docs/                         # Track B 참조 설계 (범위 밖, 보존만)
+├─ docs/                         # 설계 문서 · 프론트·백 연결 규약
 └─ .kiro/specs/complaint-assistant/
 ```
 
@@ -174,9 +174,9 @@ hackerthon2_llm_1/
 
 ---
 
-## Session Container Rules (Streamlit `st.session_state`)
+## Session Container Rules (서버 세션 · 클라이언트 상태)
 
-DB(영속)와 세션 컨테이너(휘발성, 브라우저 탭 단위)의 경계를 컴포넌트 구현 전에 못박는다. Streamlit은 탭마다 독립된 `session_state`를 서버 메모리에 두고 재실행(rerun)마다 복원하므로, 여기 넣을 것과 DB로 보낼 것을 헷갈리면 새로고침 시 데이터가 사라지거나 탭 간에 상태가 새는 사고가 난다.
+DB(영속)와 휘발성 상태의 경계를 구현 전에 못박는다. 로그인 세션은 HttpOnly 쿠키 + 서버 저장소라 새로고침을 견디고, 화면 상태(입력 중인 텍스트, 열어둔 모달)만 브라우저에 남아 새로고침에 사라진다. 어느 쪽에 둘지 헷갈리면 새로고침 시 데이터가 사라지거나 탭 간에 상태가 새는 사고가 난다.
 
 ### 세션에만 두는 것 (탭 닫으면 소멸, 재조회로 복구 불가)
 
@@ -631,7 +631,7 @@ class AuthManager:
 
 ---
 
-## UI Design (Streamlit)
+## UI Design
 
 ### app.py — 진입점 & 역할 분기
 
@@ -906,4 +906,4 @@ def test_accept_fails_across_schools():
 2. 학생에게 상태 변경 알림
 3. 카테고리별/기간별 통계 대시보드
 4. 이미지 첨부
-5. FastAPI + React로 마이그레이션 (Track B, 필요시)
+5. 실시간 반영 고도화 (SSE — 현재 구조에서 바로 가능)

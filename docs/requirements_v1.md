@@ -2,23 +2,16 @@
 
 > ## 이 문서의 위치
 >
-> **대회(Kiro) 정본은 `.kiro/specs/complaint-assistant/`다.** 지금 실제로 구현하는 것은 그쪽이다.
+> **v1 설계다. 현재 정본은 `.kiro/specs/complaint-assistant/`(UniVoice)이고, 만드는 것은 그쪽이다.**
 >
-> 이 문서는 **Track B — FastAPI + React 확장 구조**의 설계다. 대회 후에 짓는다.
-> 두 트랙이 어긋나면 **`.kiro/specs/`가 이긴다.**
+> 지우지 않고 두는 이유는 여기 적힌 설계 원칙이 아직 유효하기 때문이다 —
+> 두 코어 분리, LLM에 쓰기 권한을 주지 않는 제안·승인 구조, 줄 단위 문서 모델.
+> UniVoice가 그것을 어떻게 축약했는지 대조할 근거가 된다.
 >
-> | | Track A (대회 제출) | Track B (이 문서) |
-> |---|---|---|
-> | 정본 | `.kiro/specs/complaint-assistant/` | `docs/requirements_v1.md` |
-> | 스택 | Streamlit + Bedrock + FAISS | FastAPI + React + PostgreSQL + Redis + Bedrock |
-> | 배포 | EC2 | 미정 |
-> | 시점 | 지금 | 대회 후 |
->
-> **두 트랙이 공유하는 원칙** — 두 코어 분리 · LLM 소유 금지 · 제안→diff→승인 · 줄 단위 문서.
-> 이 문서의 5~7장이 그 원칙의 상세 서술이고, Track A는 그것을 Streamlit 위에 축약해 구현한다.
-> 전체 구조 설명은 루트 `KIRO_SPEC.md`.
+> **구현 시작점은 `docs/api-contract.md`다.** 이 문서가 아니다.
 
 ---
+
 
 _2026-08-27 · 상태: 검토 중_
 
@@ -527,7 +520,6 @@ POST   /sessions/{sid}/document/redo
 ### 제약
 
 - **도구 호출이 전제다.** 캔버스 전체가 그 위에 서 있다. 착수 전 실측으로 확인한다.
-  (Track A의 `M0-TASK-001`이 Bedrock 도구 호출을 실측한다. 그 결과가 두 트랙에 함께 적용된다.)
   모델은 바꿀 수 있으므로 LLM 클라이언트 인터페이스 뒤에 가둔다 — 교체가 그 안에서 끝나야 한다.
 - **인증은 HttpOnly 쿠키 세션.** 세션 id를 쿠키에 싣고 실체는 Redis에 둔다.
   - `EventSource`는 커스텀 헤더를 붙이지 못한다. 쿠키는 자동으로 실리므로 SSE가 그대로 인증된다.
@@ -553,7 +545,6 @@ POST   /sessions/{sid}/document/redo
 
 - [ ] **Bedrock에 도구를 붙여 호출하면 도구 호출이 규격대로 돌아온다** (probe 스크립트로 실측)
       — **이것이 첫 태스크다.** 실패하면 구조화 출력 파싱으로 방향을 틀어야 하므로 뒤 작업을 시작하지 않는다.
-      Track A의 `M0-TASK-001`과 같은 검증이므로 한 번만 하면 된다.
 - [ ] `docker compose -f docker/compose.dev.yml up`으로 postgres·redis·backend·frontend가 뜬다
 - [ ] `GET /health`가 200과 함께 세 곳의 도달 여부를 반환한다
 - [ ] LLM이 죽어 있어도 서버는 뜨고 `/health`가 그 사실을 알려준다

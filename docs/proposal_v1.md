@@ -2,14 +2,16 @@
 
 > ## 이 문서의 위치
 >
-> **대회(Kiro) 정본은 `.kiro/specs/complaint-assistant/`다.**
-> 이 제안서는 **Track B — FastAPI + React 확장 구조**를 설명한다. 대회 후에 짓는 쪽이다.
+> **v1 설계다. 현재 정본은 `.kiro/specs/complaint-assistant/`(UniVoice)이고, 만드는 것은 그쪽이다.**
 >
-> 지금 구현하는 것은 Track A(Streamlit + Bedrock)이고, 그쪽 태스크 목록은 `.kiro/specs/complaint-assistant/tasks.md`에 있다.
-> 다만 **설계 원칙은 두 트랙이 같다** — 두 코어 분리, LLM 소유 금지, 제안→diff→승인, 줄 단위 문서.
-> 아래 "어떻게 동작하나"가 그 원칙의 근거이므로 Track A를 만드는 사람도 읽을 값어치가 있다.
+> 지우지 않고 두는 이유는 여기 적힌 설계 원칙이 아직 유효하기 때문이다 —
+> 두 코어 분리, LLM에 쓰기 권한을 주지 않는 제안·승인 구조, 줄 단위 문서 모델.
+> UniVoice가 그것을 어떻게 축약했는지 대조할 근거가 된다.
+>
+> **구현 시작점은 `docs/api-contract.md`다.** 이 문서가 아니다.
 
 ---
+
 
 _2026-08-27_
 
@@ -352,9 +354,9 @@ LLM의 일이 "글쓰기"에서 **"칸 채우기"**로 바뀐다. 양식은 "섹
 ## 지금 상태와 다음 단계
 
 - `.kiro/specs/complaint-assistant/` — **대회 정본.** User Story · 이중 트랙 설계 · 38개 태스크
-- `docs/requirements_v1.md` — Track B 상세판. 스키마·API·완료 기준 전부
+- `docs/requirements_v1.md` — v1 상세판. 스키마·API·완료 기준 전부
 - `docs/dev-log.md` — 결정의 배경과 과정
 - `KIRO_SPEC.md` — 두 트랙과 문서들의 관계
 - 디렉토리 골격과 폴더별 문서는 이미 잡혀 있다. 각 폴더 `README.md`에 무엇을 구현할지 적혀 있다.
 
-**다음**: Track A부터 만든다. 태스크는 `.kiro/specs/complaint-assistant/tasks.md`에 이미 쪼개져 있다.
+**다음**: 현재 만드는 것은 UniVoice다. 태스크는 `.kiro/specs/complaint-assistant/tasks.md`에 쪼개져 있고, 구현 규약은 `docs/api-contract.md`에 있다.
