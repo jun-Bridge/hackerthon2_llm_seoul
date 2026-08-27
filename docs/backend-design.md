@@ -279,76 +279,155 @@ def verify_password(user_id, password) -> None:
 
 ## 7. 대화 세션 컨테이너
 
-> **`.kiro` 정본에 아직 없는 구조다.** 정본은 민원 하나당 초안 하나(`draft_key`)만 있고
-> 대화 스레드를 목록으로 관리하지 않는다. 아래는 그것을 채우는 설계이고,
-> 채택하면 정본에 반영해야 한다.
+> `requirements_v1.md` §7.5에 정의된 로직이다. UniVoice에 그대로 옮긴다.
+> **`.kiro` 정본에는 아직 없다** — 반영이 필요하다.
 
-### 7.1 세 겹으로 나뉜다
+### 7.1 세 겹으로 흐른다
 
 ```
-계정
- └── 세션 목록          "과거 대화" — 사이드바에 제목으로 늘어선다
-      └── 세션 하나      제목 · 카테고리 · 진행 상태 · 시각
-           └── 대화 기록  "현재 대화" — 말풍선으로 펼쳐진다
+        새 발화
+           │
+           ▼
+   ┌───────────────┐
+   │  현재 대화     │  최근 N턴. LLM에 원문 그대로 들어간다
+   │  (버퍼)        │
+   └───────┬───────┘
+           │  버퍼가 차면 밀려난다
+           ▼
+   ┌───────────────┐
+   │  과거 대화     │  버퍼에서 밀려난 것들. 아직 원문
+   └───────┬───────┘
+           │  일정량 쌓이면 — 이전 세션주제와 함께 압축
+           ▼
+   ┌───────────────┐
+   │  세션 주제     │  요약 문자열 하나 + 제목
+   │  (압축)        │  LLM에는 이것만 들어간다
+   └───────────────┘
 ```
 
-| 층 | 무엇 | 어디 |
+**압축이 누적된다는 것이 요점이다.** 과거 대화를 요약할 때 **이전 세션주제를 함께 넣어**
+새 세션주제를 만든다. 그래야 세션이 길어져도 맨 처음 맥락이 사라지지 않는다.
+
+```
+새 세션주제 = 압축( 이전 세션주제 + 밀려난 과거 대화 )
+```
+
+이전 요약을 버리고 최근 것만 요약하면 세 번째 압축쯤에서 초반 내용이 증발한다.
+
+### 7.2 LLM에 실제로 들어가는 것
+
+```
+system    : 시스템 프롬프트
+            + 세션주제(있으면)      ← 압축된 맥락
+messages  : 과거 대화(원문, 아직 압축 안 된 것)
+            + 현재 대화(버퍼)
+            + 이번 발화
+```
+
+**길이가 일정하게 유지된다.** 대화가 길어져도 세션주제는 문자열 하나이고,
+버퍼와 과거 대화에는 상한이 있다.
+
+> **화면에 보이는 대화와 LLM이 읽는 맥락은 다르다.**
+> 화면에는 PostgreSQL의 **전체 메시지**를 처음부터 보여준다.
+> LLM에는 **세션주제 + 과거 대화 + 버퍼**만 넣는다.
+> **이 둘을 같은 것으로 만들면 안 된다.**
+
+### 7.3 어디에 저장되나
+
+| 층 | 어디 | 왜 |
 |---|---|---|
-| **세션 목록** | 내 세션들의 제목·시각·상태 | PostgreSQL `chat_sessions` |
-| **세션 메타** | 제목, 추정 카테고리, 접수 여부 | 같은 행 |
-| **대화 기록** | 왕복 전체 | PostgreSQL `complaint_conversations` |
-| **진행 상태** | 지금 어느 단계인지, 무엇이 채워졌는지 | Redis `sess_state:{session_id}` |
+| 전체 메시지 (화면용) | PostgreSQL `complaint_conversations` | 잃으면 학생이 다시 설명해야 한다 |
+| 세션 주제 · 제목 | PostgreSQL `chat_sessions.context` · `.title` | 목록에 제목이 필요하고, 잃으면 맥락이 통째로 날아간다 |
+| 버퍼 경계 · 압축 지점 | PostgreSQL `chat_sessions.compacted_upto` | 어디까지 압축했는지. 잃으면 중복 압축된다 |
+| 압축 진행 표시 | Redis `compact:{sid}` | 잃어도 다음 턴에 다시 시도한다 |
 
-### 7.2 필요한 테이블
+**세션주제를 Redis에 두지 않는다.** 압축은 LLM을 태워 만든 값이라
+잃으면 그 비용을 다시 치러야 하고, 그 사이 맥락이 없는 채로 대화가 진행된다.
 
 ```sql
 CREATE TABLE chat_sessions (
-    id            SERIAL PRIMARY KEY,
-    user_id       INTEGER NOT NULL,
-    school_id     INTEGER NOT NULL,
-    title         VARCHAR(255),        -- 첫 발화에서 뽑는다. NULL이면 "새 대화"
-    category      VARCHAR(32),         -- 확정되면 채워진다
-    complaint_id  INTEGER,             -- 접수되면 연결. NULL이면 아직 초안
-    created_at    TIMESTAMPTZ DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ DEFAULT NOW(),
-    FOREIGN KEY (user_id)   REFERENCES users(id)      ON DELETE CASCADE,
-    FOREIGN KEY (school_id) REFERENCES schools(id)    ON DELETE CASCADE,
-    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE SET NULL
+    id             SERIAL PRIMARY KEY,
+    user_id        INTEGER NOT NULL,
+    school_id      INTEGER NOT NULL,
+    title          VARCHAR(255),      -- 압축이 갱신한다. NULL이면 "새 대화"
+    is_manual_title BOOLEAN NOT NULL DEFAULT FALSE,
+    context        TEXT,              -- ★ 세션 주제 (압축된 맥락)
+    compacted_upto INTEGER,           -- 여기까지의 메시지는 context에 녹아 있다
+    category       VARCHAR(32),
+    complaint_id   INTEGER,           -- 접수되면 연결. NULL이면 초안
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ DEFAULT NOW(),
+    FOREIGN KEY (user_id)      REFERENCES users(id)       ON DELETE CASCADE,
+    FOREIGN KEY (school_id)    REFERENCES schools(id)     ON DELETE CASCADE,
+    FOREIGN KEY (complaint_id) REFERENCES complaints(id)  ON DELETE SET NULL
 );
 CREATE INDEX idx_sessions_user ON chat_sessions(user_id, updated_at DESC);
 ```
 
-`complaint_conversations.draft_key`를 `chat_session_id`로 대체한다.
-**초안과 세션이 같은 것이 되어** 별도 키를 들고 다닐 필요가 없어진다.
+`compacted_upto`가 **버퍼의 시작점**이다. 그 이후 메시지만 원문으로 싣는다.
+별도 버퍼 저장소가 필요 없다 — 대화는 어차피 전부 DB에 있으므로 **경계만 기억하면 된다.**
 
-### 7.3 제목은 어떻게 붙나
-
-**첫 사용자 발화가 들어온 직후, LLM 응답과 같은 호출에서 함께 받는다.**
-제목만 뽑으려고 모델을 한 번 더 부르지 않는다 — 어차피 그 발화를 읽고 있기 때문이다.
+### 7.4 압축은 언제 도나
 
 ```
-title = null        → 화면에는 "새 대화"
-첫 턴 응답 도착      → title = "본관 3층 화장실 배수 불량"  (도구가 함께 돌려준다)
-카테고리 확정        → category 채움. 사이드바에 아이콘이 붙는다
-접수 완료            → complaint_id 연결. 세션이 잠기고 읽기 전용이 된다
+턴 종료 (응답을 이미 보낸 뒤)
+  │
+  ├ 미압축 메시지 수 = 전체 − compacted_upto
+  │
+  └ 임계치를 넘었나?
+       ├ 아니오 → 아무것도 하지 않는다
+       └ 예 → 백그라운드로 압축
+                ├ 대상: compacted_upto 이후 ~ 최근 N턴 직전까지
+                ├ 입력: 이전 context + 그 구간
+                ├ LLM 호출 (요약 전용, 도구 없음)
+                ├ 결과: 새 context · 새 title
+                └ 트랜잭션으로 context·title·compacted_upto를 함께 갱신
 ```
 
-**접수된 세션은 이어서 대화할 수 없다.** 민원이 이미 게시판에 올라갔기 때문이다.
-새로 쓰려면 새 세션을 연다.
+**뒤에서 돈다.** 턴 응답을 먼저 끝내고 실행하므로 사용자를 기다리게 하지 않는다.
 
-### 7.4 세션 목록 조회
+**최근 N턴은 압축하지 않는다.** 방금 오간 말이 요약으로 뭉개지면 되묻기가 이상해진다.
+버퍼는 항상 원문으로 남는다.
+
+**실패해도 대화는 멀쩡해야 한다.** 기존 `context`·`title`·`compacted_upto`를 그대로 두고
+다음 턴에 다시 시도한다. **압축은 부가 작업이지 필수 경로가 아니다.**
+
+**세션 단위로 직렬화한다.** 압축이 도는 중에 다음 턴이 시작될 수 있는데,
+둘이 동시에 `compacted_upto`를 옮기면 구간이 겹치거나 빈다.
+
+```python
+# session/draft_state.py
+def acquire_compact(sid) -> bool:
+    return redis.set(f"compact:{sid}", "1", nx=True, ex=COMPACT_TTL)
+```
+
+`SET NX`인 이유는 턴 락과 같다 — 워커가 여럿이라 "보고 세우기"는 둘 다 통과한다.
+
+### 7.5 제목
+
+**압축이 제목도 함께 만든다.** 제목만 뽑으려고 모델을 따로 부르지 않는다.
+
+| 시점 | title |
+|---|---|
+| 세션 생성 | `NULL` → 화면에는 "새 대화" |
+| 첫 확정안(`classify_and_refine`) | 도구가 준 `session_title` |
+| 압축이 돌 때마다 | 새로 뽑은 제목으로 갱신 |
+| 사용자가 직접 바꾸면 | `is_manual_title = TRUE` → **이후 자동 갱신이 덮어쓰지 않는다** |
+
+사람이 정한 이름을 기계가 뒤엎으면 안 된다.
+
+### 7.6 세션 목록 — "과거 대화"
 
 ```
 GET /chat-sessions
-  └ chat_session_repo.list(conn, user_id)
-       SELECT id, title, category, complaint_id, updated_at
-       WHERE user_id = %s ORDER BY updated_at DESC
+  → id · title · category · complaint_id · updated_at   (최신순)
 ```
 
-**`school_id`가 아니라 `user_id`로 거른다.** 내 대화는 나만 본다 — 게시판은 익명 공개지만
-초안 대화는 개인 것이다.
+**`user_id`로 거른다.** 게시판은 익명 공개지만 **초안 대화는 개인 것이다.**
 
----
+**접수된 세션은 이어서 대화할 수 없다.** `complaint_id`가 차면 읽기 전용이 되고,
+새로 쓰려면 새 세션을 연다. 이미 게시판에 올라간 민원의 근거 대화를 뒤에서
+바꿀 수 있으면 안 되기 때문이다.
 
 ## 7-1. 챗봇이 도는 단계
 
