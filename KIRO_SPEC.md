@@ -3,12 +3,12 @@
 이 프로젝트는 **두 가지 요구사항을 동시에 만족**합니다:
 
 1. **독립 설계** (`docs/`)
-   - `requirements.md`: 전체 시스템 설계 (FastAPI + React)
-   - `proposal.md`: 제안서 (두 코어, 제안/승인, 줄 단위 모델)
+   - `requirements_v1.md`: 전체 시스템 설계 (FastAPI + React)
+   - `proposal_v1.md`: 제안서 (두 코어, 제안/승인, 줄 단위 모델)
    - `dev-log.md`: 결정 과정 기록
 
 2. **AWS Bedrock 해커톤 제약** (`.kiro/specs/complaint-assistant/`)
-   - `requirements.md`: User Stories + Acceptance Criteria
+   - `requirements_v1.md`: User Stories + Acceptance Criteria
    - `design.md`: 이중 트랙 아키텍처
    - `tasks.md`: 38개 구체적 태스크
 
@@ -22,7 +22,7 @@
 
 ### Track B: FastAPI + React (확장 구조)
 - **스택**: FastAPI + React + PostgreSQL + Redis + Bedrock
-- **범위**: `docs/requirements.md` 전체
+- **범위**: `docs/requirements_v1.md` 전체
 - **목표**: 프로덕션 레벨 확장성
 - **시점**: 대회 후 구현
 

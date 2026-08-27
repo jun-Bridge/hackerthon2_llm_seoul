@@ -311,7 +311,7 @@ LLM **AWS Bedrock** (Claude 계열, 도구 호출) ·
 > **M0의 첫 태스크는 도구 호출 실측이다.** 캔버스 전체가 그 위에 서 있다.
 > 안 되면 구조화 출력 파싱으로 방향을 틀어야 하므로 **그 전엔 뒤 작업을 시작하지 않는다.**
 
-각 마일스톤의 완료 기준은 전부 테스트로 판정한다. 상세 목록은 `requirements.md` 9장.
+각 마일스톤의 완료 기준은 전부 테스트로 판정한다. 상세 목록은 `requirements_v1.md` 9장.
 
 ---
 
@@ -352,7 +352,7 @@ LLM의 일이 "글쓰기"에서 **"칸 채우기"**로 바뀐다. 양식은 "섹
 ## 지금 상태와 다음 단계
 
 - `.kiro/specs/complaint-assistant/` — **대회 정본.** User Story · 이중 트랙 설계 · 38개 태스크
-- `docs/requirements.md` — Track B 상세판. 스키마·API·완료 기준 전부
+- `docs/requirements_v1.md` — Track B 상세판. 스키마·API·완료 기준 전부
 - `docs/dev-log.md` — 결정의 배경과 과정
 - `KIRO_SPEC.md` — 두 트랙과 문서들의 관계
 - 디렉토리 골격과 폴더별 문서는 이미 잡혀 있다. 각 폴더 `README.md`에 무엇을 구현할지 적혀 있다.

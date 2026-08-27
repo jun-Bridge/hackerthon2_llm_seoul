@@ -31,3 +31,5 @@ build/
 *.key
 .streamlit/secrets.toml
 .aws/
+env.md
+**/env.md

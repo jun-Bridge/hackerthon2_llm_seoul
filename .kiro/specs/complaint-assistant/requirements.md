@@ -1,268 +1,398 @@
-# 민원 작성 도우미 — Requirements
+# UniVoice — 학교별 익명 캠퍼스 민원 서비스 — Requirements
 
 ## Overview
 
-**시설 민원을 대화로 작성해 문서로 완성하는 웹 도구**
+**학생이 겪는 캠퍼스 시설 불편을 자연어로 제보하면 AI가 정중한 공문서로 다듬고 카테고리를 분류해, 학교별로 격리된 게시판에 올리고 관리자가 처리하는 서비스**
 
-사용자가 겪은 상황을 채팅으로 말하면 LLM(AWS Bedrock)이 민원 문서로 정리해 **제안**하고, 사용자가 확인·수정해 완성합니다.
+학생은 구어체로 대충 써도 되고, AI(AWS Bedrock)가 행정 문서 규격(카테고리/위치/제목/본문)으로 변환한다. 학생은 변환 결과를 확인한 뒤에만 정식 접수하며, 접수된 민원은 같은 학교 학생 전체에게 익명으로 공개된다. 관리자는 자기 학교 민원만 보고 상태를 바꾼다.
 
 ### 핵심 설계 원칙
 
-> **LLM은 문서를 소유하지 않는다.**
-> 필요할 때 함수로 읽고, 고치고 싶으면 제안만 한다. 실제 반영은 언제나 사용자가 한다.
+> **학교(School)가 데이터 격리의 경계다.**
+> 모든 계정은 가입 시 학교에 소속되고, 민원·통계·목록은 항상 소속 학교로 필터링된다. 다른 학교 데이터는 보이지 않는다.
+
+> **민원은 익명이다.**
+> 게시판과 관리자 화면 어디에도 작성자 식별 정보가 노출되지 않는다. (내부적으로 어뷰징 방지를 위한 최소 추적은 별도 검토 — Out of Scope 참고)
 
 ### 대회 제약 사항
 
-- **LLM**: AWS Bedrock (Claude 3 Sonnet 또는 Haiku)
-- **프론트엔드**: Streamlit (빠른 프로토타이핑)
-- **배포**: EC2 (팀 키 `hackathon-{팀ID}-key.pem` 사용)
-- **문서 검색**: FAISS 기반 RAG (선택적)
+- **LLM**: AWS Bedrock (`global.anthropic.claude-sonnet-5`), 도구 호출로 민원 분류+변환
+- **프론트엔드**: Streamlit
+- **배포**: EC2 (팀 키 `hackathon-e1-t01-key.pem`)
+- **DB**: SQLite (계정/학교/민원 저장, 옵션 2 아키텍처 유지)
+
+---
+
+## Actors
+
+| 역할 | 설명 |
+|---|---|
+| 학생 (student) | 민원 작성, 소속 학교 게시판 조회 |
+| 관리자 (admin) | 소속 학교 민원 검토 및 상태 변경 |
+| 학교 (school) | 계정과 민원의 격리 단위. 여러 개가 배포 전 시드로 미리 생성됨 |
 
 ---
 
 ## User Stories
 
-### Epic 1: 계정 관리
-- **US-1.1** 사용자로서 이메일과 비밀번호로 가입하고 싶다
-- **US-1.2** 사용자로서 로그인하고 내 세션 목록을 보고 싶다
-- **US-1.3** 사용자로서 비밀번호를 변경하고 싶다
-- **US-1.4** 사용자로서 계정을 탈퇴하고 내 모든 데이터가 삭제되길 원한다
+### Epic 1: 계정 & 학교 소속
+- **US-1.1** 가입 시 학교를 직접 고르지 않는다. **이메일 도메인**(`@` 뒤 부분)으로 소속 학교가 자동으로 정해진다 (예: `student1@chosun.ac.kr` → 조선대학교)
+- **US-1.2** 가입 시 역할(학생/관리자)을 선택한다. 관리자를 선택하면 해당 학교에 미리 배정된 **관리자 코드** 중 하나를 입력해야 한다 (같은 학교 이메일이라는 사실만으로 관리자가 될 수는 없다)
+- **US-1.3** 등록되지 않은 도메인으로 가입을 시도하면 "지원하지 않는 학교"로 안내되고 가입이 차단된다 (오타로 인한 학교 오분류 방지)
+- **US-1.4** 로그인하면 내 학교 데이터만 보인다 (다른 학교는 조회 자체가 불가능)
+- **US-1.5** 비밀번호를 변경할 수 있다
+- **US-1.6** 계정을 탈퇴하면 내가 작성한 민원을 포함해 관련 데이터가 삭제된다
 
-### Epic 2: 대화와 세션
-- **US-2.1** 사용자로서 새 대화를 시작하고 싶다
-- **US-2.2** 사용자로서 과거 대화를 이어가고 싶다
-- **US-2.3** 사용자로서 대화 제목이 자동으로 생성되길 원한다
-- **US-2.4** 사용자로서 LLM 응답이 실시간으로 스트리밍되길 원한다
+**학교/도메인/코드 준비 방식 (데모 전제)**: 학교, 그에 연결된 이메일 도메인, 관리자 코드는 서비스 운영자가 배포 전에 시드 스크립트로 미리 심어둔다. 가입 화면에는 학교 선택 UI 자체가 없다 — 이메일만 입력하면 도메인으로 자동 매칭된다. 코드 값은 데모용이라 임의 문자열이면 충분하다 (예: `SNU-ADM-01`).
 
-### Epic 3: 문서 편집 (캔버스)
-- **US-3.1** 사용자로서 LLM이 만든 문서를 옆 화면에서 보고 싶다
-- **US-3.2** 사용자로서 문서를 자유롭게 수정하고 싶다
-- **US-3.3** 사용자로서 LLM에게 "이 부분만 다시 써줘"라고 요청하고 싶다
-- **US-3.4** 사용자로서 마크다운 파일로 다운로드하고 싶다
+**왜 드롭다운 대신 도메인 매칭인가**: 학교 목록에서 실수로 다른 학교를 선택하면 민원이 잘못된 게시판에 올라가는 사고가 나지만, 이메일 도메인은 위조하지 않는 한 소속을 스스로 증명하는 근거가 되어 이 실수 자체가 발생하지 않는다. UI도 한 단계 줄어든다.
 
-### Epic 4: 제안과 승인
-- **US-4.1** 사용자로서 LLM의 편집을 diff로 확인하고 싶다
-- **US-4.2** 사용자로서 제안을 적용하거나 거절할 수 있어야 한다
-- **US-4.3** 사용자로서 LLM이 내 편집을 덮어쓰지 않길 원한다
-- **US-4.4** 사용자로서 잘못 적용한 것을 실행취소하고 싶다
+### Epic 2: 민원 작성 (학생 — 대화형 정제)
+- **US-2.1** 학생으로서 겪은 불편을 자연어(구어체)로 자유롭게 입력하고 싶다
+- **US-2.2** AI가 입력을 분석해 **카테고리, 위치, 정제된 제목, 행정 문서체 본문**으로 변환해주길 원한다
+- **US-2.3** 위치나 상황 설명이 부족하면 AI가 바로 확정하지 않고 **채팅으로 되물어서** 채워야 한다 (예: "어느 건물인지 알려주시겠어요?")
+- **US-2.4** 되묻는 질문에 답하면 AI가 이전 답변까지 반영해 다시 판단한다 (충분해지면 최종안 제시, 아니면 추가 질문)
+- **US-2.5** 최종안(미리보기)을 확인한 뒤 접수 여부를 결정하고 싶다
+- **US-2.6** 마음에 안 들면 다시 채팅으로 수정을 요청하고 싶다 ("위치를 다시 3층으로 바꿔줘" 등)
+- **US-2.7** "정식 접수" 버튼을 눌러야만 실제로 게시판에 올라간다 (대화만으로는 접수되지 않음)
+- **US-2.8** 접수 후에도 원본 대화 전체(질문-답변 왕복 포함)를 "원문 보기"로 확인할 수 있다
+- **US-2.9** 접수한 민원을 취소(철회)할 수 있다. 철회 시 비밀번호를 다시 입력해 본인 확인을 거쳐야 하며, 성공하면 게시판·관리자 목록 양쪽에서 즉시 사라진다
+- **US-2.10** 철회는 본인이 접수한 민원에만 가능하다 (다른 학생의 민원은 철회 버튼조차 보이지 않음 — 익명 게시판이라도 "내 글" 여부는 클라이언트가 세션의 `user_id`로 판별)
+
+### Epic 3: 학교별 전역 게시판 (학생)
+- **US-3.1** 학생으로서 우리 학교에 접수된 모든 민원을 실시간으로 보고 싶다
+- **US-3.2** 각 민원의 카테고리, 위치, 제목, 본문, 접수 시각, 처리 상태를 보고 싶다
+- **US-3.3** 작성자가 누군지는 알 수 없어야 한다 (익명, 단 US-2.10처럼 본인 글에는 예외적으로 철회 버튼이 보임)
+- **US-3.4** 원한다면 학생이 작성한 원문(변환 전 텍스트)도 토글로 볼 수 있다
+- **US-3.5** 상태(미확인/확인/처리중/해결완료/보류/거절)가 배지로 구분되어 보인다
+- **US-3.6** 관리자가 남긴 코멘트가 있으면(특히 보류 사유) 게시판에서도 확인할 수 있다 — 왜 보류/거절됐는지 학생이 알 수 있어야 투명성이 생긴다
+- **US-3.7** 철회된 민원은 목록에 아예 나타나지 않는다
+
+### Epic 4: 관리자 대시보드
+- **US-4.1** 관리자로서 우리 학교 민원 전체 건수와 상태별 건수를 통계로 보고 싶다
+- **US-4.2** 상태별 필터 탭으로 민원 목록을 좁혀 보고 싶다
+- **US-4.3** 표에서 카테고리/위치/제목/접수시각/상태를 한눈에 보고 싶다
+- **US-4.4** 새로 들어온 민원(**미확인** 상태)이 목록에 쌓여 있고, 이미 확인한 민원과 구분되어 보인다
+- **US-4.5** 목록에서 민원을 클릭해 상세 화면(학생-AI 대화 전체 + 최종 정제 문서)을 열면, 그 시점에 상태가 **자동으로 `미확인` → `확인`으로 전환**된다 (관리자가 별도 버튼을 누르지 않아도 됨 — 열람 자체가 확인 행위)
+- **US-4.6** `확인` 상태가 된 민원에 대해서만 **수락 / 보류 / 거절** 세 가지 결정 버튼이 나타난다
+  - **수락**: 처리에 착수한다는 뜻으로, 상태가 `처리중`으로 바뀐다. 이후 조치가 끝나면 별도 "해결 완료" 버튼으로 `해결완료`까지 전환한다 (수락 한 번으로 끝나는 게 아니라 `처리중 → 해결완료` 순서를 거친다)
+  - **보류**: 클릭하면 **코멘트 입력이 필수인 작은 창(모달)**이 뜬다. 코멘트를 적어야만 보류 처리가 완료된다
+  - **거절**: 클릭 즉시 `거절` 상태로 바뀐다 (코멘트 필수 아님)
+- **US-4.7** 관리자는 민원 상태와 무관하게 **언제든지 코멘트를 추가**할 수 있다 (보류일 때만 코멘트를 쓸 수 있는 게 아니라, 상시 가능. 보류로 전환하는 순간에만 코멘트가 필수일 뿐)
+- **US-4.8** 상태 변경이 학생 게시판에도 즉시 반영되길 원한다
+- **US-4.9** 학생이 철회한 민원은 목록에서 사라진다 (별도 "철회됨" 탭은 1차 범위 밖 — Out of Scope 참고)
 
 ### Epic 5: 대회 필수 기능
 - **US-5.1** 심사위원으로서 Bedrock 호출 로그를 확인하고 싶다
 - **US-5.2** 팀원으로서 EC2에 배포된 앱에 접속하고 싶다
-- **US-5.3** 사용자로서 민원 양식 샘플을 RAG로 참조하고 싶다 (선택)
 
 ---
 
-## Technical Architecture
+## Category Taxonomy (고정 목록)
 
-### 두 개의 구현 트랙
+AI는 아래 목록 중 하나로만 분류한다 (자유 텍스트 카테고리 생성 금지 — Bedrock 도구 호출의 enum 제약으로 강제):
 
-#### Track A: Streamlit 프로토타입 (대회 제출용)
-```
-app.py                          # Streamlit 메인 UI
-├─ bedrock_simple_test.py       # Bedrock 연결 테스트
-├─ bedrock_faiss_indexer.py     # 민원 양식 인덱싱
-└─ bedrock_faiss_rag_chatbot.py # RAG 기반 대화 + 문서 생성
-```
-
-**특징:**
-- 빠른 프로토타이핑, 대회 요구사항 충족
-- 세션 관리는 Streamlit session_state
-- 문서는 메모리 + 로컬 파일 저장
-
-#### Track B: FastAPI + React (확장 가능 구조)
-```
-backend/
-├─ app/orchestrator/    # 턴 실행기
-├─ app/chat/            # 대화 코어
-├─ app/document/        # 문서 코어
-└─ app/llm/             # Bedrock 클라이언트
-
-frontend/
-├─ src/components/chat/
-└─ src/components/canvas/
-```
-
-**특징:**
-- 프로덕션 레벨 확장성
-- PostgreSQL + Redis 백엔드
-- 두 코어 분리 원칙 유지
-
-### 공통 LLM 인터페이스
-
-둘 다 같은 도구 호출 구조 사용:
-
-```python
-# 읽기 (즉시 실행)
-read_document() -> List[Line]
-
-# 쓰기 (제안만)
-propose_replace_line(line_id, text)
-propose_insert_lines(after_line_id, texts[])
-propose_delete_lines(line_ids[])
-propose_replace_document(lines[])
-```
-
-Bedrock Claude는 도구 호출을 지원하므로 기존 설계 그대로 적용.
+- 냉난방 / 공조
+- 위생 / 배관
+- 전기 / 설비
+- 영상 / 기자재
+- 공간 / 편의
+- 안전 / 보안
+- 기타
 
 ---
 
-## Data Models
+## Status Workflow
 
-### PostgreSQL (Track B만)
 ```
-app_user ──< session ──< message
-                  └──── document ──< line
+미확인 (unconfirmed, 기본값 — 학생이 정식 접수한 직후)
+  │
+  │  [관리자가 상세 화면을 열람 — 자동 전환, 버튼 없음]
+  ▼
+확인 (confirmed — 관리자가 열람함. 이 상태에서만 수락/보류/거절 버튼이 나타남)
+  ├─→ [수락 버튼] → 처리중 (in_progress)
+  │                    │
+  │                    │  [해결 완료 버튼]
+  │                    ▼
+  │                 해결완료 (resolved) ── 최종 상태
+  │
+  ├─→ [보류 버튼 — 코멘트 필수] → 보류 (hold)
+  │
+  └─→ [거절 버튼] → 거절 (rejected) ── 최종 상태
+
+(학생 전용, 위 상태와 독립적으로 언제든)
+어떤 상태든 → 철회 (withdrawn)
 ```
 
-### Streamlit Session State (Track A)
-```python
-st.session_state = {
-    'user_id': str,
-    'sessions': List[Session],
-    'current_session': Session,
-    'document_lines': List[Line],
-    'proposal_buffer': List[Edit],
-    'undo_stack': List[Snapshot]
-}
+- **초기 상태는 항상 `미확인`.** 접수 직후 관리자가 아무것도 하지 않은 상태.
+- **`미확인 → 확인`은 버튼이 아니라 열람 행위로 자동 전환된다.** 관리자가 목록에서 해당 민원을 클릭해 상세 화면을 열면 그 즉시 DB에서 상태가 바뀐다. "확인 버튼"은 존재하지 않는다.
+- **수락/보류/거절 버튼은 `확인` 상태에서만 노출된다.** `미확인` 상태의 민원에는 세 버튼이 보이지 않는다 (먼저 열람해서 확인 상태로 만들어야 결정 버튼이 나타남 — 관리자가 보지도 않고 처리 결정을 내리는 것을 막는 설계).
+- **수락은 최종 상태가 아니라 처리 시작 신호다.** `확인 → 처리중`으로만 넘어가고, 실제로 조치가 끝나면 별도의 "해결 완료" 버튼으로 `처리중 → 해결완료`로 다시 전환해야 한다. 이 두 단계는 순서를 건너뛸 수 없다 (처리중을 거치지 않고 바로 해결완료로 갈 수 없음).
+- **보류는 코멘트 입력이 필수다.** 보류 버튼을 누르면 코멘트 입력 모달이 뜨고, 텍스트를 채워야만 실제로 `보류` 상태로 바뀐다. 빈 코멘트로는 보류 처리가 완료되지 않는다.
+- **코멘트는 상태와 무관하게 언제든 추가할 수 있다.** 보류로 전환하는 순간에만 코멘트가 필수이고, 그 외에는 관리자가 아무 때나 코멘트를 남길 수 있다 (진행 상황 공유, 추가 설명 등). 코멘트는 여러 개 누적 가능 — 단일 필드 덮어쓰기가 아니다.
+- **거절은 최종 상태**이며 코멘트는 선택사항이다.
+- **철회는 학생만 실행하는 별도 경로**이고 위 관리자 상태 전이와 독립적이다. 관리자가 이미 처리중/해결완료/거절 처리했더라도 학생은 철회할 수 있다 (1차 범위에서는 처리 완료 후 철회를 막지 않음 — 데모 단순성 우선, Out of Scope 참고).
+- 철회된 민원은 학생 게시판과 관리자 목록 양쪽에서 즉시 사라진다 (하드 삭제가 아니라 상태 전환 — 레코드는 남지만 조회 쿼리에서 제외).
+- 학생은 철회 외의 상태를 변경할 수 없다 (확인/수락/보류/거절/해결완료는 관리자 전용이며, 그중 확인은 관리자가 누르는 버튼조차 아니라 열람의 부작용이다).
+
+---
+
+## Data Model
+
+### ER 관계도
+
+```
+schools (학교)
+  │ 1
+  │
+  ├──< admin_codes (관리자 코드, N)         [school_id FK, ON DELETE CASCADE]
+  │
+  ├──< users (계정, N)                      [school_id FK, ON DELETE CASCADE]
+  │      │ 1
+  │      │
+  │      └──< complaints (민원, N)          [submitted_by_user_id FK, ON DELETE SET NULL]
+  │             (익명성 때문에 이 FK는 UI에 절대 노출되지 않음 — 철회 소유권 검증 전용)
+  │
+  └──< complaints (민원, N)                 [school_id FK, ON DELETE CASCADE]
+         │ 1                                 (모든 조회는 이 school_id로 스코프)
+         │
+         ├──< complaint_conversations (학생-AI 대화, N)   [complaint_id FK, ON DELETE CASCADE]
+         │      (접수 전에는 complaint_id가 NULL, draft_key로만 묶여 있음)
+         │
+         └──< complaint_comments (관리자 코멘트, N)        [complaint_id FK, ON DELETE CASCADE]
+                (author_user_id도 FK지만 익명 게시판 표시에는 "관리자"로만 뭉뚱그려짐)
 ```
 
-### 문서 구조 (공통)
-```python
-@dataclass
-class Line:
-    id: str              # UUID
-    line_order: int      # 0부터 시작
-    content: str         # 마크다운 한 줄
-    is_temp: bool = False  # 제안 중 임시 줄
+**카디널리티 요약**:
+| 관계 | 종류 | 삭제 전파 |
+|---|---|---|
+| school → users | 1:N | CASCADE (학교 삭제 시 계정도 삭제 — 실제로는 학교를 삭제하는 UI가 없어 시드 데이터 정리용) |
+| school → admin_codes | 1:N | CASCADE |
+| school → complaints | 1:N | CASCADE |
+| user → complaints (submitted_by_user_id) | 1:N | **SET NULL** (계정 탈퇴해도 민원 레코드는 남기고 소유자만 지움 — 게시판은 이미 익명이라 표시에 영향 없음) |
+| complaint → complaint_conversations | 1:N | CASCADE |
+| complaint → complaint_comments | 1:N | CASCADE |
+
+**왜 `submitted_by_user_id`만 SET NULL이고 나머지는 CASCADE인가**: 민원 자체(내용·상태·대화·코멘트)는 학교의 공공 기록이라 작성자가 탈퇴해도 보존해야 한다. 반면 학교나 민원이 삭제되면 그에 종속된 하위 데이터는 함께 사라지는 게 맞다 (고아 레코드 방지).
+
+### SQLite Schema
+```sql
+CREATE TABLE schools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    email_domain TEXT UNIQUE NOT NULL, -- 예: 'chosun.ac.kr' — 가입 시 이 값으로 학교를 자동 매칭
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE admin_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    school_id INTEGER NOT NULL,
+    code TEXT NOT NULL,                -- 데모용 임의 문자열, 학교당 여러 개 시드 가능
+    is_used BOOLEAN NOT NULL DEFAULT 0, -- 1회성으로 쓸지는 시드 정책에 따름 (기본: 재사용 허용)
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    school_id INTEGER NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('student', 'admin')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+);
+
+CREATE TABLE complaints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    school_id INTEGER NOT NULL,
+    submitted_by_user_id INTEGER,      -- 내부 추적용, UI에는 절대 노출 안 함
+    category TEXT NOT NULL,
+    location TEXT NOT NULL,
+    refined_title TEXT NOT NULL,
+    refined_body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT '미확인'
+        CHECK(status IN ('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    confirmed_at TIMESTAMP,             -- 관리자가 처음 열람한 시각 (미확인→확인 자동전환 시점). NULL이면 아직 미확인
+    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+    FOREIGN KEY (submitted_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- 학생-AI 대화 왕복 기록. 접수 전(정제 중)과 접수 후 모두 여기 남는다.
+CREATE TABLE complaint_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    complaint_id INTEGER,              -- 접수 전에는 NULL (아직 complaint row가 없음), 접수 시 연결
+    draft_key TEXT NOT NULL,           -- 접수 전 임시 식별자 (세션 UUID). 접수되면 complaint_id로 대체
+    role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
+);
+
+-- 관리자 코멘트. 보류 전환 시 1건 필수 생성, 그 외에는 언제든 추가 가능한 누적 로그.
+CREATE TABLE complaint_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    complaint_id INTEGER NOT NULL,
+    author_user_id INTEGER,            -- 작성한 관리자. 게시판 표시는 "관리자"로만 뭉뚱그림
+    content TEXT NOT NULL,
+    is_hold_reason BOOLEAN NOT NULL DEFAULT 0, -- 보류 전환 시 필수로 남긴 코멘트인지 표시
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
 ```
+
+**익명성 설계 노트**: `submitted_by_user_id`는 어뷰징 대응(동일 학생 반복 신고 등)을 위해 내부적으로만 보관하고, 학생 게시판·관리자 화면 어디에도 조회/표시하지 않는다. 완전 삭제를 원하면 아예 컬럼을 없애도 되지만, 계정 탈퇴 시 CASCADE 정리를 고려해 `ON DELETE SET NULL`로 둔다.
+
+**대화 이력 설계 노트**: `raw_text` 단일 컬럼 대신 `complaint_conversations`로 왕복 전체를 남긴다. 접수 전에는 `draft_key`(클라이언트 세션에서 생성한 임시 UUID)로 묶어 관리하고, "정식 접수" 시점에 해당 `draft_key`의 모든 행에 `complaint_id`를 채워 넣는다. 관리자 상세 화면과 학생 게시판의 "원문 보기"는 이 테이블을 시간순으로 렌더링한다.
+
+**코멘트 설계 노트**: 단일 컬럼(예: `complaints.hold_reason`)이 아니라 별도 테이블로 분리한 이유는 US-4.7("언제든 코멘트 추가 가능, 누적")을 만족하려면 1:N 구조가 필요하기 때문이다. `is_hold_reason`은 "보류로 전환하면서 필수로 남긴 코멘트"와 "그 이후 자유롭게 추가한 코멘트"를 구분해, UI에서 보류 사유를 강조 표시할 때 쓴다. `confirmed_at`은 `미확인 → 확인` 자동 전환이 정확히 언제 일어났는지 감사(audit) 목적으로 남긴다.
+
+---
+
+## Session Container Rules (Streamlit `st.session_state`)
+
+Streamlit은 브라우저 탭(정확히는 브라우저 세션)마다 독립된 `st.session_state`를 서버 메모리에 들고 있다가, 재실행(rerun)될 때마다 복원해서 스크립트를 다시 실행하는 구조다. DB(영속)와 세션 컨테이너(휘발성)의 경계를 명확히 해야 새로고침·재로그인·탈퇴 시 무엇이 남고 무엇이 사라지는지 예측 가능해진다.
+
+### 컨테이너에 들어가는 것 (휘발성 — 탭 닫으면 소멸)
+
+| 키 | 내용 | 생성 시점 | 소멸 시점 |
+|---|---|---|---|
+| `logged_in` | 로그인 여부 (bool) | 로그인 성공 | 로그아웃, 탭 종료 |
+| `user_id`, `school_id`, `role` | 인증 결과 3종 | 로그인 성공 | 로그아웃 |
+| `draft_key` | 접수 전 대화 임시 식별자 (uuid4) | 학생이 새 민원 작성 시작 | 정식 접수 완료 시 (새 uuid로 재발급) |
+| `preview_result` | AI가 반환한 최종 확정안 (미리보기용) | `is_complete=True` 응답 수신 | 접수 완료 또는 재작성 시작 |
+| `selected_complaint_id` | 관리자가 상세 화면을 연 민원 ID | 목록 행 클릭 | 상세 화면 닫기 |
+| `withdraw_target_id` | 철회 확인 폼이 열린 민원 ID | 철회 버튼 클릭 | 확인/취소 |
+
+### 컨테이너에 두지 않는 것 (반드시 DB로)
+
+- **대화 전체**: `complaint_conversations`에 매 턴 즉시 기록. 세션에는 `draft_key`만 들고 다니고, 화면 렌더링 시 `db.get_conversation(draft_key)`로 매번 다시 읽는다. 이렇게 해야 새로고침해도 대화가 안 사라진다.
+- **민원 목록/통계**: 매 렌더링마다 `db.list_complaints()`, `db.get_complaint_stats()`로 다시 조회한다. 세션에 캐시하지 않는다 (다른 사용자의 변경이 반영 안 되는 사고를 막기 위해 — 새로고침 기반 갱신이라는 설계 전제와도 맞음).
+- **코멘트 이력**: `complaint_comments`에 즉시 기록, 상세 화면 열 때마다 재조회.
+
+### 왜 이 경계가 중요한가
+
+1. **새로고침 안전성**: `st.rerun()`이나 브라우저 새로고침이 일어나도 DB에 있는 것은 그대로고, 세션에만 있던 것(예: 아직 접수 안 한 미리보기)은 사라진다. 이 손실이 "안전한 손실"이 되도록 — 접수 완료된 데이터는 절대 세션에만 존재해서는 안 된다.
+2. **탭/계정 간 누수 방지**: 세션은 탭(브라우저 세션) 단위로 격리되므로, 같은 관리자가 탭을 두 개 열어도 `selected_complaint_id`는 각자 따로 논다. 반대로 DB 상태(민원 상태, 코멘트)는 탭과 무관하게 전역으로 공유되어야 하므로 세션에 캐시하면 안 된다.
+3. **탈퇴/로그아웃 시 정리가 단순해진다**: 세션에 있는 것은 `logout()`이 키를 지우는 것만으로 끝난다. DB에 있는 것(민원, 대화, 코멘트)은 계정 탈퇴 시 CASCADE/SET NULL 규칙(ER 관계도 참고)이 처리하며, 세션 정리와는 별개 경로다.
+
+### draft_key 수명 규칙
+
+`draft_key`는 "아직 접수되지 않은 대화"를 식별하는 유일한 키라서 별도로 정리한다:
+
+- 학생이 "새 민원 작성"을 시작할 때만 새로 발급된다 (재발급 트리거는 접수 완료, 또는 명시적 "새로 작성" 버튼)
+- 같은 `draft_key`로 여러 번 대화를 주고받아도 계속 누적된다 (되묻기 왕복 전체가 하나의 draft)
+- 접수 완료 시 해당 draft의 모든 `complaint_conversations` 행이 새 `complaint_id`와 연결되고, 세션의 `draft_key`는 새 uuid로 교체된다 — 이전 draft를 재사용해 다음 민원과 대화가 섞이는 것을 방지
+- 학생이 대화 중간에 탭을 닫고 다시 로그인하면 이전 `draft_key`는 세션에서 사라지고 복구되지 않는다 (미접수 대화는 유실 허용 — Out of Scope의 "임시저장" 항목 참고)
 
 ---
 
 ## Acceptance Criteria
 
-### M0 — 대회 환경 검증
-- [ ] Bedrock API 호출 성공 (`bedrock_simple_test.py`)
-- [ ] Claude 3 Sonnet 도구 호출 지원 확인
-- [ ] EC2 인스턴스 생성 및 팀 키로 SSH 접속
-- [ ] Streamlit 앱이 브라우저에서 열림
+### M0 — 대회 환경 검증 (기존과 동일)
+- [ ] Bedrock API 호출 성공
+- [ ] EC2 인스턴스 SSH 접속 및 Streamlit 구동
 - [ ] `requirements.txt` 패키지 설치 완료
 
-### M1 — 기본 대화 (Track A)
-- [ ] 사용자가 메시지를 입력하고 Bedrock 응답을 받는다
-- [ ] 응답이 스트리밍으로 표시된다
-- [ ] 대화 이력이 화면에 남는다
-- [ ] 세션을 새로 시작할 수 있다
+### M1 — 계정 & 학교 시스템
+- [ ] 시드 스크립트로 학교 여러 개, 학교별 이메일 도메인, 학교별 관리자 코드가 미리 DB에 들어가 있다
+- [ ] 가입 폼은 이메일과 비밀번호만 입력받는다 (학교 선택 UI 없음)
+- [ ] 이메일 도메인이 시드된 학교와 일치하면 해당 학교로 자동 소속되고, 일치하지 않으면 가입이 차단된다
+- [ ] 역할이 관리자면 매칭된 학교에 배정된 코드 중 하나와 일치해야 가입된다
+- [ ] 로그인 시 학교 스코프가 세션에 고정된다
+- [ ] 로그인한 역할에 따라 학생 화면 / 관리자 화면이 고정된다 (스위처로 임의 전환 불가)
 
-### M2 — 문서 생성과 표시
-- [ ] "민원 문서로 정리해줘" 입력 시 문서가 생성된다
-- [ ] 문서가 화면 오른쪽에 마크다운으로 표시된다
-- [ ] 문서를 `.md` 파일로 다운로드할 수 있다
-- [ ] 줄 단위로 구조화되어 있다 (내부 구조 검증)
+### M2 — AI 민원 변환 (대화형)
+- [ ] 학생이 첫 원문을 입력하면 Bedrock 호출
+- [ ] 정보가 부족하면 도구 호출 대신 **일반 텍스트 질문**으로 응답한다 (채팅창에 AI 질문이 뜬다)
+- [ ] 학생이 답하면 지금까지의 대화 전체를 컨텍스트로 다시 Bedrock 호출
+- [ ] 충분한 정보가 모이면 도구 호출로 카테고리(고정 목록 중 하나)/위치/제목/본문을 확정한다
+- [ ] 확정된 결과가 미리보기 화면에 표시된다
+- [ ] "정식 접수" 전까지는 `complaints` 테이블에 저장되지 않는다 (대화는 `draft_key`로 임시 저장됨)
+- [ ] 접수 후 관리자/학생 화면에서 질문-답변 전체 왕복을 시간순으로 볼 수 있다
 
-### M3 — 제안과 승인 (핵심)
-- [ ] LLM이 `propose_*` 도구를 호출하면 제안 버퍼에 쌓인다
-- [ ] 제안이 diff(+/−)로 화면에 표시된다
-- [ ] "적용" 버튼을 누르면 문서가 바뀐다
-- [ ] "취소" 버튼을 누르면 문서가 그대로다
-- [ ] 제안 대기 중 문서 편집이 막힌다
-- [ ] 실행취소로 이전 상태로 돌아간다
+### M3 — 학생 게시판 & 철회
+- [ ] 접수된 민원이 `미확인` 상태로 소속 학교 게시판에 나타난다
+- [ ] 다른 학교 민원은 보이지 않는다
+- [ ] 작성자 정보가 없다 (익명)
+- [ ] 원문(AI와의 대화 전체) 토글이 동작한다
+- [ ] 상태 배지가 올바르게 표시된다 (미확인/확인/처리중/해결완료/보류/거절 6가지 색상 구분)
+- [ ] 보류/거절된 민원은 관리자 코멘트를 함께 볼 수 있다
+- [ ] 본인이 접수한 민원에만 "철회" 버튼이 보인다
+- [ ] 철회 버튼 클릭 시 비밀번호 입력을 요구하고, 일치해야만 철회가 실행된다
+- [ ] 철회 후 게시판과 관리자 목록 양쪽에서 즉시 사라진다
 
-### M4 — 사용자 편집
-- [ ] 문서 텍스트를 직접 수정할 수 있다
-- [ ] "이 부분만 다시 써줘"가 동작한다
-- [ ] LLM이 최신 문서 내용을 읽는다
-- [ ] 사용자 편집과 LLM 수정이 충돌하지 않는다
+### M4 — 관리자 대시보드
+- [ ] 통계 카드(전체/미확인/확인/처리중/해결완료/보류/거절)가 정확하다
+- [ ] 필터 탭으로 상태별 목록이 좁혀진다
+- [ ] `미확인` 민원을 클릭해 상세 화면을 열면 그 즉시 DB 상태가 `확인`으로 바뀐다 (버튼 없이 자동)
+- [ ] 상세 화면에 학생-AI 대화 전체와 최종 정제 문서가 표시된다
+- [ ] `확인` 상태에서만 수락/보류/거절 버튼이 보인다 (`미확인` 상태에는 안 보임)
+- [ ] "수락" 클릭 시 `처리중`으로 바뀌고, 별도 "해결 완료" 버튼이 나타난다
+- [ ] "해결 완료" 클릭 시 `해결완료`로 바뀐다 (처리중을 거치지 않고는 도달 불가)
+- [ ] "보류" 클릭 시 코멘트 입력 모달이 뜨고, 텍스트를 입력해야만 `보류`로 전환된다 (빈 값이면 전환 취소)
+- [ ] "거절" 클릭 시 즉시 `거절`로 전환된다 (코멘트 선택)
+- [ ] 상태와 무관하게 "코멘트 추가" 입력창이 항상 열려 있고, 제출 시 `complaint_comments`에 누적된다
+- [ ] 상태 변경이 학생 게시판에도 반영된다 (새로고침 시)
+- [ ] 철회된 민원은 관리자 목록에도 나타나지 않는다
 
-### M5 — 대회 제출 (Track A)
+### M5 — 대회 제출
 - [ ] EC2 공개 IP로 외부 접속 가능
-- [ ] `TEAM_GUIDE.html` 가이드 문서 포함
-- [ ] Bedrock 사용량 모니터링 스크립트 포함
+- [ ] 데모 시나리오: 학생 계정으로 접수 → 관리자 계정으로 처리 → 학생 게시판에서 상태 확인
 - [ ] README에 팀 정보와 실행 방법 기재
-
-### M6 — RAG 통합 (선택)
-- [ ] `bedrock_faiss_indexer.py`로 민원 양식 인덱싱
-- [ ] `bedrock_faiss_rag_chatbot.py`로 유사 사례 검색
-- [ ] 문서 생성 시 참조 사례가 프롬프트에 포함됨
 
 ---
 
 ## Technical Constraints
 
 ### 필수 제약
-- **LLM**: AWS Bedrock (Claude 3 계열)
-- **배포**: EC2 (대회 제공 인스턴스)
-- **인증**: 팀 키 (`hackathon-{팀ID}-key.pem`)
-- **비용**: Bedrock 사용량 제한 내
+- **LLM**: AWS Bedrock, `global.anthropic.claude-sonnet-5` (리전 자동 감지, Instance Profile 인증)
+- **배포**: EC2
+- **DB**: SQLite (`data/app.db`)
+- **비밀번호**: bcrypt 해싱
 
 ### 권장 사항
-- Streamlit secrets로 AWS 자격증명 관리
+- Bedrock 도구 호출(tool use)로 카테고리를 enum으로 강제 — 자유 텍스트 분류 시 오분류/오타 위험
 - CloudWatch Logs로 Bedrock 호출 모니터링
-- FAISS 인덱스는 로컬 파일로 저장 (`.faiss`)
-
-### 선택 사항
-- PostgreSQL/Redis (Track B용, 프로토타입에는 과도)
-- React 프론트엔드 (Streamlit로 충분)
-- 계정 시스템 (단일 사용자로 단순화 가능)
-
----
-
-## Development Phases
-
-### Phase 1: Bedrock 검증 (1일)
-1. `bedrock_simple_test.py` 작성 및 실행
-2. 도구 호출 테스트 (`read_document`, `propose_*`)
-3. EC2 배포 및 외부 접속 확인
-
-### Phase 2: Streamlit 프로토타입 (2일)
-1. `app.py` 기본 UI (채팅 + 문서 패널)
-2. `bedrock_faiss_rag_chatbot.py` 통합
-3. 제안/승인 UI 구현
-4. 실행취소 스택 추가
-
-### Phase 3: 문서 코어 로직 (2일)
-1. 줄 단위 모델 구현
-2. 제안 버퍼와 diff 계산
-3. 임시 id 관리
-4. 도구 호출 executor
-
-### Phase 4: 대회 제출 준비 (1일)
-1. EC2 배포 자동화
-2. `TEAM_GUIDE.html` 작성
-3. 데모 시나리오 준비
-4. 비용 모니터링 설정
-
-### Phase 5: Track B 확장 (선택)
-FastAPI + React 구조로 확장 (대회 이후)
+- SQLite 백업 스크립트 (cron)
 
 ---
 
 ## Out of Scope (1차)
 
-- 복수 사용자 계정 (단일 사용자로 충족)
-- 이미지 첨부 (텍스트 민원만)
-- 민원서 양식 강제 (자유 형식)
-- 실제 접수처 제출
+- 이메일 인증, OAuth 로그인
+- 완전 무기명(내부 추적조차 없는 익명) — 어뷰징 대응 및 철회 기능을 위해 최소 추적(`submitted_by_user_id`)은 유지
+- 다국어 지원
+- 이미지 첨부
+- 학교 간 데이터 공유/통합 통계
+- 민원 상태 변경 알림(이메일/푸시)
+- 관리자 다수 권한 등급 (관리자는 전부 동일 권한)
+- 실시간 웹소켓 갱신 (새로고침 기반으로 충분)
+- 관리자가 이미 처리(처리중/해결완료/거절)한 민원의 철회를 막는 정책 (1차는 항상 철회 허용)
+- "철회됨" 상태의 별도 조회/복구 UI (철회 시 조회 대상에서 제외될 뿐 데이터는 보존 — 필요하면 DB 직접 조회로 확인)
+- 철회 사유 입력 (버튼 한 번 + 비밀번호 확인이면 충분)
+- 미접수 대화(draft)의 임시저장/복구 (탭 닫으면 유실 허용 — Session Container Rules 참고)
+- 코멘트 수정/삭제 (누적 로그이므로 추가만 가능, 정정하려면 새 코멘트를 덧붙임)
+- `처리중`에서 `보류`나 `거절`로의 역방향 전환 (1차는 `확인` 상태에서만 세 버튼이 나타나고, `처리중` 진입 후에는 "해결 완료"만 존재 — 처리 도중 재검토가 필요하면 코멘트로 남기는 정도로 충분하다고 판단)
 
 ---
 
 ## Success Metrics
 
 ### 대회 심사 기준
-- Bedrock 활용도 (도구 호출 사용 여부)
-- 데모 완성도 (제안/승인 흐름 시연)
-- 아이디어 독창성 (LLM이 문서를 소유하지 않는 설계)
+- Bedrock 활용도 (분류 + 변환에 도구 호출 사용)
+- 데모 완성도 (학생 접수 → 관리자 처리 → 게시판 반영 흐름)
+- 아이디어 독창성 (학교별 격리 + 익명 게시판 + AI 행정 문서 변환)
 
 ### 기술 지표
 - Bedrock 응답 시간 < 3초
-- 제안 생성 성공률 > 90%
-- 사용자 편집 후 LLM 읽기 정확도 100%
+- 카테고리 분류 정확도 (고정 목록 준수율) 100% (enum 강제이므로 오분류 자체가 불가능해야 함)
 
 ---
 
 ## References
 
 - [AWS Bedrock 문서](https://docs.aws.amazon.com/bedrock/)
-- [Claude 3 도구 호출](https://docs.anthropic.com/claude/docs/tool-use)
-- [Streamlit 문서](https://docs.streamlit.io/)
-- 기존 설계 문서: `docs/requirements.md`, `docs/proposal.md`
+- [Claude 도구 호출](https://docs.anthropic.com/claude/docs/tool-use)
+- 목업: `connectionTest/` 첨부 HTML (UniVoice UI 참조)

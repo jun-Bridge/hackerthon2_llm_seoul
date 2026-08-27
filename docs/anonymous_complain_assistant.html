@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UniVoice - 익명 캠퍼스 컴플레인 도우미</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #4F46E5;
+      --primary-dark: #4338CA;
+      --primary-light: #EEF2FF;
+      --accent: #06B6D4;
+      --bg: #F8FAFC;
+      --card-bg: #FFFFFF;
+      --text-main: #1E293B;
+      --text-muted: #64748B;
+      --border: #E2E8F0;
+      
+      --status-pending-bg: #FEF3C7;
+      --status-pending-text: #B45309;
+      --status-accepted-bg: #DCFCE7;
+      --status-accepted-text: #15803D;
+      --status-hold-bg: #F1F5F9;
+      --status-hold-text: #475569;
+      --status-rejected-bg: #FEE2E2;
+      --status-rejected-text: #B91C1C;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Navigation */
+    header {
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-weight: 700;
+      font-size: 1.25rem;
+      color: var(--primary);
+    }
+
+    .brand-badge {
+      background: var(--primary-light);
+      color: var(--primary);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .view-switcher {
+      display: flex;
+      background: var(--bg);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      gap: 4px;
+    }
+
+    .view-btn {
+      border: none;
+      background: transparent;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .view-btn.active {
+      background: #FFFFFF;
+      color: var(--primary);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    .view-section {
+      display: none;
+    }
+    .view-section.active {
+      display: block;
+      animation: fadeIn 0.25s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* STUDENT VIEW GRID */
+    .student-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .student-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card-body {
+      padding: 1.25rem;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    /* Chatbot Input Box */
+    .chat-bubble-system {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      padding: 0.9rem 1rem;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+
+    .input-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      padding: 0.85rem;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      resize: vertical;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    textarea:focus {
+      border-color: var(--primary);
+    }
+
+    .quick-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .quick-tag {
+      font-size: 0.78rem;
+      background: #F1F5F9;
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+    }
+
+    .quick-tag:hover {
+      background: #E2E8F0;
+      color: var(--text-main);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-dark);
+    }
+
+    .btn-outline {
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+    }
+
+    .btn-outline:hover {
+      background: #F8FAFC;
+    }
+
+    /* AI Preview Box */
+    .ai-doc-card {
+      background: #F8FAFC;
+      border: 1.5px dashed #CBD5E1;
+      border-radius: 10px;
+      padding: 1.2rem;
+      position: relative;
+    }
+
+    .ai-doc-card.ready {
+      background: #FFFFFF;
+      border: 1.5px solid #818CF8;
+      box-shadow: 0 4px 14px rgba(79, 70, 229, 0.08);
+    }
+
+    .ai-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #4F46E5, #06B6D4);
+      color: white;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      margin-bottom: 0.8rem;
+    }
+
+    .doc-field {
+      margin-bottom: 0.8rem;
+    }
+
+    .doc-field-label {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .doc-field-value {
+      font-size: 0.92rem;
+      font-weight: 500;
+      color: var(--text-main);
+    }
+
+    .doc-field-value.highlight {
+      font-weight: 700;
+      color: #1E1B4B;
+      font-size: 1rem;
+    }
+
+    /* Feed / Board */
+    .feed-container {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      max-height: 680px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .feed-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+      background: var(--card-bg);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .feed-item:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      transform: translateY(-2px);
+    }
+
+    .feed-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.6rem;
+    }
+
+    .feed-meta {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .status-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      display: inline-block;
+    }
+
+    .status-접수 { background: var(--status-pending-bg); color: var(--status-pending-text); }
+    .status-수락 { background: var(--status-accepted-bg); color: var(--status-accepted-text); }
+    .status-보류 { background: var(--status-hold-bg); color: var(--status-hold-text); }
+    .status-거절 { background: var(--status-rejected-bg); color: var(--status-rejected-text); }
+
+    .feed-title {
+      font-size: 0.98rem;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+      color: #0F172A;
+    }
+
+    .feed-body {
+      font-size: 0.88rem;
+      color: #334155;
+      line-height: 1.5;
+      background: #F8FAFC;
+      padding: 0.65rem 0.85rem;
+      border-radius: 6px;
+    }
+
+    .feed-raw-toggle {
+      margin-top: 0.6rem;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .feed-raw-box {
+      margin-top: 0.4rem;
+      padding: 0.5rem 0.75rem;
+      background: #FFFBEB;
+      border-left: 3px solid #F59E0B;
+      font-size: 0.82rem;
+      color: #78350F;
+      display: none;
+      border-radius: 0 6px 6px 0;
+    }
+
+    /* ADMIN DASHBOARD */
+    .admin-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .admin-stats { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .stat-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .stat-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+    }
+
+    .stat-val {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #0F172A;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .admin-table-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .admin-table-toolbar {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-tabs {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .filter-btn {
+      border: 1px solid var(--border);
+      background: white;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.83rem;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .filter-btn.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+    }
+
+    .table-responsive {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: #F8FAFC;
+      padding: 0.8rem 1.1rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.82rem;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 1rem 1.1rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tr:hover {
+      background: #FAFAFA;
+    }
+
+    .action-group {
+      display: flex;
+      gap: 0.35rem;
+    }
+
+    .btn-action {
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .btn-action:hover { opacity: 0.85; }
+    .btn-act-accept { background: #DCFCE7; color: #166534; }
+    .btn-act-hold { background: #F1F5F9; color: #334155; }
+    .btn-act-reject { background: #FEE2E2; color: #991B1B; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(2px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 1rem;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      background: white;
+      max-width: 650px;
+      width: 100%;
+      border-radius: 14px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      overflow: hidden;
+      animation: modalUp 0.2s ease;
+    }
+
+    @keyframes modalUp {
+      from { transform: translateY(15px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .modal-header {
+      padding: 1.1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-body {
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+
+    .compare-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.9rem;
+    }
+
+    .compare-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 0.4rem;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Toast Notification */
+    .toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 300;
+    }
+
+    .toast {
+      background: #1E293B;
+      color: white;
+      padding: 0.75rem 1.2rem;
+      border-radius: 8px;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2);
+      font-size: 0.88rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      animation: toastIn 0.3s ease;
+    }
+
+    @keyframes toastIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <header>
+    <div class="brand">
+      <i class="bi bi-shield-check"></i>
+      <span>UniVoice</span>
+      <span class="brand-badge">익명 컴플레인 도우미</span>
+    </div>
+    <div class="view-switcher">
+      <button class="view-btn active" onclick="switchView('student')">
+        <i class="bi bi-person-fill"></i> 학생 모드 (제출/게시판)
+      </button>
+      <button class="view-btn" onclick="switchView('admin')">
+        <i class="bi bi-building-gear"></i> 시설관리처 관리자 모드
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Views Container -->
+  <main>
+    <!-- STUDENT VIEW -->
+    <section id="view-student" class="view-section active">
+      <div class="student-grid">
+        
+        <!-- Left: Chatbot & AI Transform Box -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">
+              <i class="bi bi-robot text-primary"></i> AI 민원 변환 챗봇
+            </span>
+            <span style="font-size: 0.78rem; color: var(--text-muted);">
+              <i class="bi bi-incognito"></i> 100% 완전 익명
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="chat-bubble-system">
+              💡 <b>불편한 점을 편하게 적어주세요!</b><br />
+              감정적인 말, 축약어, 거친 표현도 AI가 정중하고 행정적인 공문서 규격으로 자동 교정해 드립니다.
+            </div>
+
+            <div class="input-group">
+              <label><i class="bi bi-pencil"></i> 민원 내용 입력 (구어체/간단 메모 가능)</label>
+              <textarea id="rawInput" placeholder="예: 공학관 3층 남자화장실 세면대 물 계속 새서 바닥 한강임 ㅡㅡ 미끄러워 넘어질 뻔함 빨리 좀 고쳐줘요"></textarea>
+            </div>
+
+            <div class="quick-tags">
+              <span class="quick-tag" onclick="fillSample(0)">❄️ 에어컨 소음/냉방 불량</span>
+              <span class="quick-tag" onclick="fillSample(1)">🚰 화장실 누수/위생</span>
+              <span class="quick-tag" onclick="fillSample(2)">📽️ 강의실 빔프로젝터 고장</span>
+              <span class="quick-tag" onclick="fillSample(3)">🔌 열람실 콘센트 단선</span>
+            </div>
+
+            <button class="btn btn-outline" style="width: 100%;" onclick="transformWithAI()">
+              <i class="bi bi-stars" style="color: var(--primary);"></i> AI로 정중한 공문서로 변환하기
+            </button>
+
+            <!-- AI Transformation Output Preview -->
+            <div id="aiPreviewBox" class="ai-doc-card">
+              <div class="ai-badge"><i class="bi bi-magic"></i> AI 문서화 결과 (미리보기)</div>
+              
+              <div id="aiDocEmpty" style="text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 1rem;">
+                상단에 민원을 적고 'AI로 변환하기' 버튼을 눌러주세요.
+              </div>
+
+              <div id="aiDocContent" style="display: none;">
+                <div class="doc-field">
+                  <div class="doc-field-label">시설 분류 및 발생 위치</div>
+                  <div class="doc-field-value" id="previewLocation">-</div>
+                </div>
+                <div class="doc-field">
+                  <div class="doc-field-label">정제된 민원 공문 제목</div>
+                  <div class="doc-field-value highlight" id="previewTitle">-</div>
+                </div>
+                <div class="doc-field">
+                  <div class="doc-field-label">행정 요청 상세 내용</div>
+                  <div class="doc-field-value" id="previewBody" style="line-height: 1.45; font-size: 0.88rem;">-</div>
+                </div>
+                
+                <button class="btn btn-primary" style="width: 100%; margin-top: 0.6rem;" onclick="submitComplaint()">
+                  <i class="bi bi-send-fill"></i> 학교 관리자에게 정식 접수하기
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- Right: Public Status Board -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">
+              <i class="bi bi-megaphone-fill" style="color: #06B6D4;"></i> 실시간 익명 민원 처리 현황
+            </span>
+            <span style="font-size: 0.82rem; color: var(--text-muted);" id="feedCount">총 4건</span>
+          </div>
+          <div class="card-body" style="padding: 1rem;">
+            <div class="feed-container" id="studentFeed">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ADMIN VIEW -->
+    <section id="view-admin" class="view-section">
+      <!-- Top Metrics -->
+      <div class="admin-stats">
+        <div class="stat-card">
+          <div class="stat-icon" style="background: #EEF2FF; color: #4F46E5;"><i class="bi bi-inbox-fill"></i></div>
+          <div>
+            <div class="stat-val" id="stat-all">0</div>
+            <div class="stat-label">전체 접수 민원</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: var(--status-pending-bg); color: var(--status-pending-text);"><i class="bi bi-clock-history"></i></div>
+          <div>
+            <div class="stat-val" id="stat-접수">0</div>
+            <div class="stat-label">검토 대기</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: var(--status-accepted-bg); color: var(--status-accepted-text);"><i class="bi bi-check-circle-fill"></i></div>
+          <div>
+            <div class="stat-val" id="stat-수락">0</div>
+            <div class="stat-label">수락 및 처리중</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background: var(--status-rejected-bg); color: var(--status-rejected-text);"><i class="bi bi-x-circle-fill"></i></div>
+          <div>
+            <div class="stat-val" id="stat-거절">0</div>
+            <div class="stat-label">반려/보류</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Management Table Card -->
+      <div class="admin-table-card">
+        <div class="admin-table-toolbar">
+          <div class="filter-tabs">
+            <button class="filter-btn active" onclick="filterAdminTable('all', this)">전체보기</button>
+            <button class="filter-btn" onclick="filterAdminTable('접수', this)">검토대기 (접수)</button>
+            <button class="filter-btn" onclick="filterAdminTable('수락', this)">수락 (진행중)</button>
+            <button class="filter-btn" onclick="filterAdminTable('보류', this)">보류</button>
+            <button class="filter-btn" onclick="filterAdminTable('거절', this)">거절</button>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center;">
+            <i class="bi bi-info-circle" style="margin-right: 4px;"></i> 학생 원문과 AI 정제 문서를 함께 확인하고 조치할 수 있습니다.
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 70px;">ID</th>
+                <th style="width: 130px;">분류 / 위치</th>
+                <th>정제된 민원 문서 제목</th>
+                <th style="width: 110px;">접수 시각</th>
+                <th style="width: 90px;">상태</th>
+                <th style="width: 170px;">관리 조치</th>
+              </tr>
+            </thead>
+            <tbody id="adminTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Detail Comparison Modal -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span style="font-weight: 700; font-size: 1.05rem;" id="modalTitle">민원 상세 검토 (#204)</span>
+        <button style="border:none; background:none; font-size:1.2rem; cursor:pointer;" onclick="closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        
+        <div class="compare-box" style="background: #FFFBEB; border-color: #FDE68A;">
+          <div class="compare-label" style="color: #B45309;">
+            <i class="bi bi-chat-quote-fill"></i> 학생 입력 원문 (익명 보장 필터링)
+          </div>
+          <div id="modalRawText" style="font-size: 0.9rem; color: #78350F; line-height: 1.45;">-</div>
+        </div>
+
+        <div class="compare-box" style="background: #F8FAFC; border-color: #C7D2FE;">
+          <div class="compare-label" style="color: var(--primary);">
+            <i class="bi bi-stars"></i> AI 자동 정제 공문서 양식
+          </div>
+          <div style="margin-bottom: 0.5rem; font-weight: 700; font-size: 0.95rem; color: #1E1B4B;" id="modalDocTitle">-</div>
+          <div style="font-size: 0.88rem; color: #334155; line-height: 1.5;" id="modalDocBody">-</div>
+        </div>
+
+        <div class="doc-field">
+          <div class="doc-field-label">현재 처리 상태 변경</div>
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.4rem;">
+            <button class="btn btn-action btn-act-accept" style="padding: 8px 14px; font-size: 0.85rem;" onclick="updateStatusFromModal('수락')">
+              <i class="bi bi-check-lg"></i> 수락 (시설팀 이첩)
+            </button>
+            <button class="btn btn-action btn-act-hold" style="padding: 8px 14px; font-size: 0.85rem;" onclick="updateStatusFromModal('보류')">
+              <i class="bi bi-pause-fill"></i> 보류 (추가 확인)
+            </button>
+            <button class="btn btn-action btn-act-reject" style="padding: 8px 14px; font-size: 0.85rem;" onclick="updateStatusFromModal('거절')">
+              <i class="bi bi-x-lg"></i> 거절 (처리 불가)
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    // Initial Dataset
+    let complaints = [
+      {
+        id: 204,
+        category: "냉난방 / 설비",
+        location: "소프트웨어관 4층 402호",
+        rawText: "소프트웨어관 4층 실습실 에어컨에서 덜덜거리는 소리 심하게 나고 바람도 하나도 안 시원함 ㅡㅡ 수업 들을 때 시끄러워서 집중 안 되니까 빨리 좀 봐줘요",
+        refinedTitle: "소프트웨어관 402호 냉방 기기 이상 소음 및 성능 저하 점검 요청",
+        refinedBody: "• 현상: 실습실 내 벽면 냉방 장치 가동 시 주기적 진동 소음 발생 및 냉각 효율 저하 현상 확인\n• 영향: 강의 및 실습 중 소음으로 인한 면학 집중도 저하 및 실내 쾌적도 악화\n• 요청: 해당 호실 냉방 장치 모터/팬 정밀 점검 및 필터 청소 등 정상화 정비 조치 요청",
+        timestamp: "오늘 14:10",
+        status: "접수"
+      },
+      {
+        id: 203,
+        category: "배관 / 위생",
+        location: "학생회관 2층 화장실",
+        rawText: "학생회관 화장실 손 씻는데 온수가 아예 안 나와서 손 얼어 터질 것 같음. 밸브 잠긴 건지 확인 요망",
+        refinedTitle: "학생회관 2층 화장실 급탕(온수) 공급 중단 현상 점검 요청",
+        refinedBody: "• 현상: 학생회관 2층 공용 화장실 세면대 온수 토출 불가\n• 영향: 동절기 및 환절기 학생 위생 시설 이용 불편 가중\n• 요청: 온수 배관 밸브 개폐 상태 및 보일러 급탕 순환 펌프 점검 조치 요청",
+        timestamp: "오늘 11:30",
+        status: "수락"
+      },
+      {
+        id: 202,
+        category: "기자재 / 영상",
+        location: "인문대학 301호 강의실",
+        rawText: "301호 빔프로젝터 화면이 완전 초록색으로 나와서 교수님 PPT 글씨가 하나도 안 보입니다.",
+        refinedTitle: "인문관 301호 멀티미디어 빔프로젝터 RGB 출력 오류 점검 요청",
+        refinedBody: "• 현상: 프로젝터 출력 화면 전반에 녹색 편색(Green Tint) 왜곡 발생\n• 영향: 정규 강의 진행 시 시각 자료 판독 불가 및 학습 진행 차질\n• 요청: 영상 송출 케이블(HDMI/RGB) 접촉 상태 점검 및 광학 엔진 상태 진단/교체 요청",
+        timestamp: "어제 17:00",
+        status: "수락"
+      },
+      {
+        id: 201,
+        category: "공간 / 편의",
+        location: "중앙도서관 3열람실",
+        rawText: "자리 맡아두고 하루 종일 안 오는 사람들 짐 다 버려주세요 진짜 짜증나요",
+        refinedTitle: "중앙도서관 일반열람실 장기 사석화 방지 및 물품 관리 계도 요청",
+        refinedBody: "• 현상: 특정 좌석 대상 개인 소지품의 장시간 무단 방치(사석화) 사례 발생\n• 영향: 다수 이용자의 공용 학습 좌석 접근성 저해 및 분쟁 우려\n• 요청: 열람실 내 주기적인 순찰 강화 및 방치 물품 수거/정리 규정 안내문 부착 요청",
+        timestamp: "어제 09:20",
+        status: "보류"
+      }
+    ];
+
+    let currentRefinedTemp = null;
+    let selectedComplaintId = null;
+
+    const samplePool = [
+      {
+        raw: "소프트웨어관 4층 실습실 에어컨에서 덜덜거리는 소리 심하게 나고 바람도 하나도 안 시원함 ㅡㅡ 수업 들을 때 시끄러워서 집중 안 되니까 빨리 좀 봐줘요",
+        category: "냉난방 / 공조",
+        location: "소프트웨어관 4층 402호",
+        title: "소프트웨어관 402호 냉방기기 가동 소음 및 냉각 성능 저하 점검 요청",
+        body: "• 현상: 실습실 내 벽면 냉방 장치 가동 중 지속적인 진동 소음 및 냉각 효율 저하\n• 영향: 실습 및 강의 진행 시 집중도 저하 및 학습 환경 악화\n• 요청 사항: 냉방 설비 팬 모터 이상 유무 점검 및 정상 작동을 위한 정밀 정비 요청"
+      },
+      {
+        raw: "공학관 2층 남자화장실 소변기 아래로 물이 줄줄 새서 바닥 한강임 발 디디기 너무 찝찝하고 냄새나요",
+        category: "위생 / 배관",
+        location: "공학관 2층 남자화장실",
+        title: "공학관 2층 공용 화장실 위생기기 누수 및 바닥 배수 점검 요청",
+        body: "• 현상: 화장실 내 특정 소변기 하부 배관 패킹 노후로 인한 지속적인 누수 발생\n• 영향: 바닥 오염 및 악취 발생, 보행 중 미끄러짐 등 안전사고 우려\n• 요청 사항: 배관 연결부 패킹 교체 및 위생 환경 복구를 위한 긴급 정비 요청"
+      },
+      {
+        raw: "제2학생회관 3층 세미나실 빔프로젝터 켜면 5분 만에 툭 꺼져버림 발표 수업 준비해야 되는데 노답",
+        category: "영상 / 기자재",
+        location: "제2학생회관 3층 세미나실",
+        title: "제2학생회관 3층 세미나실 영상 기자재(프로젝터) 전원 꺼짐 오류 점검 요청",
+        body: "• 현상: 빔프로젝터 가동 후 5분 내외 자동 전원 차단(Thermal Shutdown 추정)\n• 영향: 정규 수업 및 학술 세미나 진행 불가\n• 요청 사항: 냉각 팬 필터 먼지 제거 및 프로젝터 램프/메인보드 과열 센서 점검 요청"
+      },
+      {
+        raw: "중앙도서관 1층 노트북 열람실 창가 쪽 콘센트 전기가 아예 안 들어와요 충전기를 꽂아도 반응 없음",
+        category: "전기 / 설비",
+        location: "중앙도서관 1층 노트북실",
+        title: "중앙도서관 노트북 열람실 창가 구역 전원 콘센트 단전 점검 요청",
+        body: "• 현상: 노트북 열람실 창가 측 매립형 전원 콘센트 전력 공급 중단\n• 영향: 전자기기를 활용한 학업 및 자료 검색 불가로 학생 불편 초래\n• 요청 사항: 해당 열선 분전함 차단기 확인 및 콘센트 내부 배선 단선 점검 조치 요청"
+      }
+    ];
+
+    function fillSample(index) {
+      document.getElementById('rawInput').value = samplePool[index].raw;
+      transformWithAI(samplePool[index]);
+    }
+
+    function switchView(viewName) {
+      document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.view-btn').forEach(el => el.classList.remove('active'));
+
+      if (viewName === 'student') {
+        document.getElementById('view-student').classList.add('active');
+        document.querySelectorAll('.view-btn')[0].classList.add('active');
+      } else {
+        document.getElementById('view-admin').classList.add('active');
+        document.querySelectorAll('.view-btn')[1].classList.add('active');
+        renderAdminTable();
+      }
+    }
+
+    function transformWithAI(overrideSample = null) {
+      const input = document.getElementById('rawInput').value.trim();
+      if (!input) {
+        showToast("민원 내용을 먼저 작성해 주세요!");
+        return;
+      }
+
+      showToast("✨ AI가 민원 문맥을 분석하여 공문서로 변환 중입니다...");
+
+      setTimeout(() => {
+        let result = overrideSample;
+        if (!result) {
+          // Rule-based heuristic simulation for user custom text
+          let loc = "교내 시설물 구역";
+          let cat = "시설 / 환경";
+          if (input.includes("도서관")) { loc = "중앙도서관 열람 구역"; cat = "학습 / 편의 시설"; }
+          else if (input.includes("공학관")) { loc = "공학관 강의실/복도"; cat = "강의 / 연구 시설"; }
+          else if (input.includes("화장실")) { loc = "교내 공용 화장실"; cat = "위생 / 배관"; }
+          else if (input.includes("에어컨") || input.includes("히터")) { cat = "냉난방 / 공조"; }
+
+          result = {
+            category: cat,
+            location: loc,
+            title: `${loc} 관련 시설 이상 점검 및 환경 개선 요청`,
+            body: `• 현상: 학생 실사용 시설 내 오작동 및 이용 불편 사항 발생\n• 상세: "${input.replace(/ㅡ|ㅋ|ㅠ|ㅜ|발|답/g, '').trim()}"\n• 요청 사항: 소관 부서 현장 점검 및 안전하고 쾌적한 면학 분위기 조성을 위한 신속 정비 요청`
+          };
+        }
+
+        currentRefinedTemp = {
+          rawText: input,
+          category: result.category,
+          location: result.location,
+          refinedTitle: result.title,
+          refinedBody: result.body
+        };
+
+        // Render preview
+        document.getElementById('aiDocEmpty').style.display = 'none';
+        document.getElementById('aiDocContent').style.display = 'block';
+        document.getElementById('aiPreviewBox').classList.add('ready');
+
+        document.getElementById('previewLocation').innerText = `[${result.category}] ${result.location}`;
+        document.getElementById('previewTitle').innerText = result.title;
+        document.getElementById('previewBody').innerHTML = result.body.replace(/\n/g, '<br/>');
+
+        showToast("변환 완료! 내용을 확인한 뒤 접수 버튼을 눌러주세요.");
+      }, 400);
+    }
+
+    function submitComplaint() {
+      if (!currentRefinedTemp) return;
+
+      const newId = complaints.length > 0 ? Math.max(...complaints.map(c => c.id)) + 1 : 201;
+      const newEntry = {
+        id: newId,
+        category: currentRefinedTemp.category,
+        location: currentRefinedTemp.location,
+        rawText: currentRefinedTemp.rawText,
+        refinedTitle: currentRefinedTemp.refinedTitle,
+        refinedBody: currentRefinedTemp.refinedBody,
+        timestamp: "방금 전",
+        status: "접수"
+      };
+
+      complaints.unshift(newEntry);
+
+      // Reset
+      document.getElementById('rawInput').value = '';
+      document.getElementById('aiDocEmpty').style.display = 'block';
+      document.getElementById('aiDocContent').style.display = 'none';
+      document.getElementById('aiPreviewBox').classList.remove('ready');
+      currentRefinedTemp = null;
+
+      renderStudentFeed();
+      updateStats();
+      showToast(`민원 [#${newId}] 이 학교 시설관리처에 정식 접수되었습니다!`);
+    }
+
+    function renderStudentFeed() {
+      const container = document.getElementById('studentFeed');
+      document.getElementById('feedCount').innerText = `총 ${complaints.length}건`;
+      
+      container.innerHTML = complaints.map(item => `
+        <div class="feed-item">
+          <div class="feed-header">
+            <div class="feed-meta">
+              <span style="font-weight: 700; color: var(--primary);">#${item.id}</span>
+              <span>•</span>
+              <span>${item.category}</span>
+              <span>•</span>
+              <span>${item.timestamp}</span>
+            </div>
+            <span class="status-badge status-${item.status}">${item.status === '접수' ? '검토중' : item.status}</span>
+          </div>
+          <div class="feed-title">${item.refinedTitle}</div>
+          <div class="feed-body">${item.refinedBody.replace(/\n/g, '<br/>')}</div>
+          <div>
+            <span class="feed-raw-toggle" onclick="toggleRaw(${item.id})">
+              <i class="bi bi-chat-left-dots"></i> 작성 원문 보기/숨기기
+            </span>
+            <div class="feed-raw-box" id="raw-box-${item.id}">
+              <b>[학생 작성 원문]</b> ${item.rawText}
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function toggleRaw(id) {
+      const el = document.getElementById(`raw-box-${id}`);
+      el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+    }
+
+    // Admin Table
+    let currentFilter = 'all';
+
+    function filterAdminTable(status, btnElement) {
+      currentFilter = status;
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+      if (btnElement) btnElement.classList.add('active');
+      renderAdminTable();
+    }
+
+    function renderAdminTable() {
+      const tbody = document.getElementById('adminTableBody');
+      const filtered = complaints.filter(c => currentFilter === 'all' || c.status === currentFilter);
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 2rem; color: var(--text-muted);">해당 상태의 민원이 없습니다.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(c => `
+        <tr>
+          <td style="font-weight:700; color:var(--primary);">#${c.id}</td>
+          <td>
+            <div style="font-weight:600; font-size:0.85rem;">${c.category}</div>
+            <div style="font-size:0.78rem; color:var(--text-muted);">${c.location}</div>
+          </td>
+          <td>
+            <div style="font-weight:600; color:#0F172A; cursor:pointer;" onclick="openDetailModal(${c.id})">
+              ${c.refinedTitle} <i class="bi bi-box-arrow-up-right" style="font-size:0.75rem; color:var(--primary);"></i>
+            </div>
+            <div style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
+              원문: "${c.rawText.substring(0, 32)}..."
+            </div>
+          </td>
+          <td style="color:var(--text-muted); font-size:0.82rem;">${c.timestamp}</td>
+          <td><span class="status-badge status-${c.status}">${c.status}</span></td>
+          <td>
+            <div class="action-group">
+              <button class="btn-action btn-act-accept" title="수락/처리" onclick="changeStatus(${c.id}, '수락')">수락</button>
+              <button class="btn-action btn-act-hold" title="보류" onclick="changeStatus(${c.id}, '보류')">보류</button>
+              <button class="btn-action btn-act-reject" title="거절" onclick="changeStatus(${c.id}, '거절')">거절</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+
+      updateStats();
+    }
+
+    function updateStats() {
+      document.getElementById('stat-all').innerText = complaints.length;
+      document.getElementById('stat-접수').innerText = complaints.filter(c => c.status === '접수').length;
+      document.getElementById('stat-수락').innerText = complaints.filter(c => c.status === '수락').length;
+      document.getElementById('stat-거절').innerText = complaints.filter(c => c.status === '거절' || c.status === '보류').length;
+    }
+
+    function changeStatus(id, newStatus) {
+      const item = complaints.find(c => c.id === id);
+      if (item) {
+        item.status = newStatus;
+        renderAdminTable();
+        renderStudentFeed();
+        showToast(`민원 [#${id}] 상태가 [${newStatus}] (으)로 변경되었습니다.`);
+      }
+    }
+
+    // Modal
+    function openDetailModal(id) {
+      const item = complaints.find(c => c.id === id);
+      if (!item) return;
+      selectedComplaintId = id;
+
+      document.getElementById('modalTitle').innerText = `민원 상세 검토 (#${item.id} - ${item.location})`;
+      document.getElementById('modalRawText').innerText = item.rawText;
+      document.getElementById('modalDocTitle').innerText = item.refinedTitle;
+      document.getElementById('modalDocBody').innerHTML = item.refinedBody.replace(/\n/g, '<br/>');
+
+      document.getElementById('detailModal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('detailModal').classList.remove('active');
+      selectedComplaintId = null;
+    }
+
+    function updateStatusFromModal(status) {
+      if (selectedComplaintId) {
+        changeStatus(selectedComplaintId, status);
+        closeModal();
+      }
+    }
+
+    function showToast(msg) {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `<i class="bi bi-bell-fill" style="color:#FBBF24;"></i> <span>${msg}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => toast.remove(), 2800);
+    }
+
+    // Initial render
+    renderStudentFeed();
+    updateStats();
+  </script>
+</body>
+</html>

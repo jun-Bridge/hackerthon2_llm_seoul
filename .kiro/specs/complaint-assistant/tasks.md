@@ -1,859 +1,536 @@
-# Tasks — 민원 작성 도우미
+# Tasks — UniVoice (학교별 익명 캠퍼스 민원 서비스)
 
 ## M0: 대회 환경 검증
 
 ### TASK-001: Bedrock API 연결 테스트
 **Depends on**: -
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-AWS Bedrock API 호출이 성공하는지, Claude 3 Sonnet이 도구 호출을 지원하는지 검증합니다.
+AWS Bedrock API 호출이 성공하는지, 도구 호출을 지원하는지 검증합니다.
 
 **Acceptance Criteria**:
-- [ ] `bedrock_simple_test.py` 파일 생성
-- [ ] `boto3` 로 Bedrock Runtime 클라이언트 생성
-- [ ] Claude 3 Sonnet 모델 ID로 텍스트 응답 수신
-- [ ] 도구 호출 요청 시 `tool_use` 블록 반환 확인
-- [ ] 성공/실패를 터미널에 출력
+- [ ] `bedrock_simple_test.py`로 `global.anthropic.claude-sonnet-5` 텍스트 응답 수신 확인
+- [ ] `boto3.client('bedrock-runtime')` 호출 시 리전을 지정하지 않음 (Instance Profile이 자동 처리)
+- [ ] 도구 호출(tool_choice 미지정, auto) 요청 시 `tool_use` 블록 반환 확인
+- [ ] 도구를 호출하지 않고 텍스트로만 답하는 경우도 확인 (되묻기 시나리오 사전 검증)
 
 **Files to modify**:
-- `bedrock_simple_test.py` (new)
-- `requirements.txt`
-
-**Implementation notes**:
-```python
-# bedrock_simple_test.py 예시
-import boto3
-import json
-
-def test_bedrock_connection():
-    bedrock = boto3.client('bedrock-runtime', region_name='us-west-2')
-    
-    # 1. 단순 텍스트 응답
-    response = bedrock.invoke_model(
-        modelId='anthropic.claude-3-sonnet-20240229-v1:0',
-        body=json.dumps({
-            "messages": [{"role": "user", "content": "Hello!"}],
-            "max_tokens": 100
-        })
-    )
-    print("✓ Bedrock 연결 성공")
-    
-    # 2. 도구 호출 지원 확인
-    response = bedrock.invoke_model(
-        modelId='anthropic.claude-3-sonnet-20240229-v1:0',
-        body=json.dumps({
-            "messages": [{"role": "user", "content": "현재 날씨 알려줘"}],
-            "tools": [{
-                "name": "get_weather",
-                "description": "날씨 정보를 가져온다",
-                "input_schema": {"type": "object", "properties": {}}
-            }],
-            "max_tokens": 100
-        })
-    )
-    # tool_use 블록 확인
-    print("✓ 도구 호출 지원 확인")
-
-if __name__ == '__main__':
-    test_bedrock_connection()
-```
+- `bedrock_simple_test.py` (기존 파일 존재 — 로직 유지, 모델 ID만 확인)
 
 ---
 
 ### TASK-002: EC2 인스턴스 설정 및 접속
 **Depends on**: -
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
 대회 제공 EC2 인스턴스에 SSH로 접속하고 기본 환경을 설정합니다.
 
 **Acceptance Criteria**:
-- [ ] 팀 키(`hackathon-{팀ID}-key.pem`) 다운로드 및 권한 설정
-- [ ] SSH로 EC2 인스턴스 접속 성공
-- [ ] Python 3.11 설치 확인
-- [ ] git, pip 사용 가능 확인
-- [ ] 보안 그룹에서 포트 8501 개방
-
-**Commands**:
-```bash
-chmod 400 hackathon-{팀ID}-key.pem
-ssh -i hackathon-{팀ID}-key.pem ec2-user@<PUBLIC_IP>
-
-# EC2 내부
-python3 --version  # 3.11+
-git --version
-pip3 --version
-```
+- [ ] `hackathon-e1-t01-key.pem`으로 SSH 접속 성공 (이미 확보됨 — `connectionTest/`)
+- [ ] Python 3.11+, git, pip 사용 가능 확인
+- [ ] 보안 그룹에서 포트 8501 개방 확인 (이미 구성됨)
 
 ---
 
-### TASK-003: 프로젝트 구조 생성
+### TASK-003: 프로젝트 구조 생성 및 SQLite 스키마 초기화
 **Depends on**: -
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Streamlit 앱에 필요한 디렉토리와 기본 파일을 생성합니다.
+Streamlit 앱 디렉토리 구조와 SQLite 스키마(학교/도메인/관리자코드/계정/민원/대화)를 생성합니다.
 
 **Acceptance Criteria**:
-- [ ] `app.py` 빈 파일 생성
-- [ ] `lib/` 디렉토리 생성 (`__init__.py` 포함)
-- [ ] `data/` 디렉토리 생성
-- [ ] `.streamlit/secrets.toml.example` 생성
-- [ ] `requirements.txt` 기본 패키지 명시
-- [ ] `.gitignore`에 `.streamlit/secrets.toml`, `data/`, `*.pem` 추가
+- [ ] `app.py`, `lib/`, `pages/`, `data/` 생성
+- [ ] `requirements.txt`: `streamlit`, `boto3`, `bcrypt`
+- [ ] `.gitignore`에 `data/*.db`, `*.pem` 추가
+- [ ] `init_db.py` 실행 시 5개 테이블 생성: `schools`, `admin_codes`, `users`, `complaints`, `complaint_conversations`, `complaint_comments`
+- [ ] `complaints.status` CHECK 제약이 `('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')` 7종을 포함
+- [ ] `complaints.confirmed_at` 컬럼 존재 (기본 NULL)
 
 **Files to create**:
-- `app.py`
-- `lib/__init__.py`
-- `lib/bedrock_client.py` (stub)
-- `lib/document_core.py` (stub)
-- `lib/tool_executor.py` (stub)
-- `lib/proposal_manager.py` (stub)
-- `requirements.txt`
-- `.streamlit/secrets.toml.example`
+- `app.py`, `lib/__init__.py`, `lib/database_manager.py`, `lib/auth_manager.py`,
+  `lib/bedrock_client.py`, `lib/complaint_service.py`,
+  `pages/student_view.py`, `pages/admin_view.py`,
+  `requirements.txt`, `init_db.py`
 
-**requirements.txt**:
-```
-streamlit==1.31.0
-boto3==1.34.0
+**init_db.py**:
+```python
+import sqlite3
+from pathlib import Path
+
+def init_database():
+    Path("data").mkdir(exist_ok=True)
+    conn = sqlite3.connect("data/app.db")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS schools (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            email_domain TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS admin_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            school_id INTEGER NOT NULL,
+            code TEXT NOT NULL,
+            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            school_id INTEGER NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('student', 'admin')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS complaints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            school_id INTEGER NOT NULL,
+            submitted_by_user_id INTEGER,
+            category TEXT NOT NULL,
+            location TEXT NOT NULL,
+            refined_title TEXT NOT NULL,
+            refined_body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '미확인'
+                CHECK(status IN ('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            confirmed_at TIMESTAMP,
+            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
+            FOREIGN KEY (submitted_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS complaint_conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            complaint_id INTEGER,
+            draft_key TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS complaint_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            complaint_id INTEGER NOT NULL,
+            author_user_id INTEGER,
+            content TEXT NOT NULL,
+            is_hold_reason BOOLEAN NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE,
+            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE SET NULL
+        );
+    """)
+    conn.commit()
+    conn.close()
+    print("✓ 데이터베이스 초기화 완료")
+
+if __name__ == "__main__":
+    init_database()
 ```
 
 ---
 
-### TASK-004: Streamlit Hello World
+### TASK-004: 학교/도메인/관리자코드 시드 스크립트
 **Depends on**: TASK-003
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Streamlit 앱이 로컬과 EC2에서 정상 실행되는지 확인합니다.
+데모용 학교 여러 개, 이메일 도메인, 관리자 코드를 미리 심습니다. 가입 화면에는 학교 생성 UI가 없으므로 이 스크립트가 유일한 학교 등록 경로입니다.
 
 **Acceptance Criteria**:
-- [ ] `streamlit run app.py` 실행 시 브라우저가 열림
-- [ ] "민원 작성 도우미" 제목 표시
-- [ ] EC2에서 백그라운드 실행 (`nohup streamlit run app.py &`)
-- [ ] 외부에서 `http://<EC2_IP>:8501` 접속 확인
+- [ ] `seed_schools.py` 실행 시 최소 2개 학교가 들어간다 (교차 격리 데모용)
+- [ ] 각 학교에 이메일 도메인 1개, 관리자 코드 1~2개가 배정된다
+- [ ] 재실행해도 중복 삽입되지 않는다 (`INSERT OR IGNORE` 또는 존재 체크)
+
+**Files to create**:
+- `seed_schools.py`
+
+**Implementation**:
+```python
+# seed_schools.py
+import sqlite3
+
+SCHOOLS = [
+    {"name": "조선대학교", "domain": "chosun.ac.kr", "codes": ["CSU-ADM-01", "CSU-ADM-02"]},
+    {"name": "서울대학교", "domain": "snu.ac.kr", "codes": ["SNU-ADM-01"]},
+]
+
+def seed():
+    conn = sqlite3.connect("data/app.db")
+    for school in SCHOOLS:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO schools (name, email_domain) VALUES (?, ?)",
+            (school["name"], school["domain"])
+        )
+        school_id = cursor.lastrowid or conn.execute(
+            "SELECT id FROM schools WHERE email_domain = ?", (school["domain"],)
+        ).fetchone()[0]
+
+        for code in school["codes"]:
+            exists = conn.execute(
+                "SELECT 1 FROM admin_codes WHERE school_id = ? AND code = ?",
+                (school_id, code)
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    "INSERT INTO admin_codes (school_id, code) VALUES (?, ?)",
+                    (school_id, code)
+                )
+    conn.commit()
+    conn.close()
+    print(f"✓ {len(SCHOOLS)}개 학교 시드 완료")
+
+if __name__ == "__main__":
+    seed()
+```
+
+---
+
+## M1: 계정 & 학교 시스템
+
+### TASK-101: DatabaseManager 계정/학교 기능 구현
+**Depends on**: TASK-004
+**Status**: OPEN
+
+**Description**:
+이메일 도메인 매칭, 관리자 코드 검증, 계정 CRUD를 구현합니다.
+
+**Acceptance Criteria**:
+- [ ] `find_school_by_email(email)`: `@` 뒤 도메인으로 학교 조회, 없으면 `None`
+- [ ] `verify_admin_code(school_id, code)`: 해당 학교 코드 목록에 있는지 확인
+- [ ] `create_user(school_id, email, password, role)`: bcrypt 해싱 후 저장
+- [ ] `authenticate_user(email, password)`: 성공 시 `{id, school_id, role}` 반환
+- [ ] `verify_password(user_id, password)`: 철회 시 재사용할 별도 메서드
+- [ ] `change_password`, `delete_user` 구현
+
+**Files to modify**:
+- `lib/database_manager.py`
+
+---
+
+### TASK-102: 가입/로그인 UI 구현 (도메인 자동 매칭)
+**Depends on**: TASK-101
+**Status**: OPEN
+
+**Description**:
+학교 선택 UI 없이 이메일만으로 가입되는 폼을 만듭니다.
+
+**Acceptance Criteria**:
+- [ ] 가입 폼: 이메일, 비밀번호(8자+), 역할(학생/관리자) 라디오
+- [ ] 역할이 관리자면 코드 입력 필드가 나타남
+- [ ] 이메일 도메인이 시드된 학교와 매칭 안 되면 "지원하지 않는 학교 이메일입니다" 에러
+- [ ] 관리자 코드가 불일치하면 가입 차단
+- [ ] 로그인 성공 시 `st.session_state`에 `logged_in`, `user_id`, `school_id`, `role` 저장
+- [ ] 로그아웃 버튼으로 세션 초기화
+
+**Files to modify**:
+- `lib/auth_manager.py`, `app.py`
+
+---
+
+### TASK-103: 역할 기반 화면 분기
+**Depends on**: TASK-102
+**Status**: OPEN
+
+**Description**:
+로그인한 `role`에 따라 학생 화면 또는 관리자 화면만 보이게 고정합니다. (목업의 뷰 스위처는 만들지 않음)
+
+**Acceptance Criteria**:
+- [ ] `role == 'student'`이면 `pages/student_view.py`만 렌더링
+- [ ] `role == 'admin'`이면 `pages/admin_view.py`만 렌더링
+- [ ] URL 조작이나 새로고침으로도 다른 role 화면에 접근 불가
 
 **Files to modify**:
 - `app.py`
 
-**Implementation**:
-```python
-# app.py
-import streamlit as st
-
-st.set_page_config(page_title="민원 작성 도우미", layout="wide")
-st.title("민원 작성 도우미")
-
-st.write("Hello World!")
-```
-
 ---
 
-## M1: 기본 대화 (Track A)
+## M2: AI 민원 변환 (대화형)
 
-### TASK-101: BedrockClient 구현
-**Depends on**: TASK-001, TASK-003
+### TASK-201: BedrockClient — 되묻기/확정 분기 구현
+**Depends on**: TASK-001
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Bedrock API를 호출하고 스트리밍 응답을 처리하는 클라이언트를 구현합니다.
+`tool_choice`를 강제하지 않고, 모델이 정보 부족 시 텍스트로 되묻거나 충분하면 도구를 호출하도록 구현합니다.
 
 **Acceptance Criteria**:
-- [ ] `BedrockClient` 클래스 생성
-- [ ] `stream_with_tools()` 메서드 구현
-- [ ] 토큰이 도착할 때마다 callback 호출
-- [ ] tool_use 블록을 수집해 반환
-- [ ] AWS 자격증명을 `st.secrets`에서 읽기
+- [ ] `CATEGORIES` 상수 (고정 7개 목록)
+- [ ] `_refine_tool_schema()`: category(enum)/location/refined_title/refined_body, 설명에 "충분할 때만 호출" 명시
+- [ ] `refine_complaint(conversation)`: `tool_use` 블록이 있으면 `{is_complete: True, ...}`, 없으면 텍스트를 `{is_complete: False, follow_up_question}`으로 반환
+- [ ] Bedrock 호출 실패 시 `BedrockRefineError` 발생
 
 **Files to modify**:
 - `lib/bedrock_client.py`
-- `.streamlit/secrets.toml.example`
-
-**Implementation**:
-```python
-# lib/bedrock_client.py
-import boto3
-import json
-import streamlit as st
-from typing import List, Callable, Dict, Any
-
-class BedrockClient:
-    def __init__(self, model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0"):
-        self.bedrock = boto3.client(
-            'bedrock-runtime',
-            region_name=st.secrets.aws.region,
-            aws_access_key_id=st.secrets.aws.access_key_id,
-            aws_secret_access_key=st.secrets.aws.secret_access_key
-        )
-        self.model_id = model_id
-    
-    def stream_with_tools(
-        self,
-        messages: List[Dict],
-        tools: List[Dict],
-        callback: Callable[[str], None]
-    ) -> List[Dict]:
-        """
-        스트리밍으로 응답을 받으면서 도구 호출을 수집.
-        
-        Args:
-            messages: [{"role": "user", "content": "..."}]
-            tools: 도구 정의 목록
-            callback: 토큰마다 호출될 함수
-            
-        Returns:
-            도구 호출 목록 (없으면 빈 리스트)
-        """
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "messages": messages,
-            "tools": tools,
-            "max_tokens": 4096,
-            "temperature": 0.7
-        })
-        
-        response = self.bedrock.invoke_model_with_response_stream(
-            modelId=self.model_id,
-            body=body
-        )
-        
-        tool_calls = []
-        
-        for event in response['body']:
-            chunk = json.loads(event['chunk']['bytes'].decode())
-            
-            if chunk['type'] == 'content_block_start':
-                if chunk.get('content_block', {}).get('type') == 'tool_use':
-                    tool_calls.append({
-                        'id': chunk['content_block']['id'],
-                        'name': chunk['content_block']['name'],
-                        'input': {}
-                    })
-            
-            elif chunk['type'] == 'content_block_delta':
-                delta = chunk['delta']
-                
-                if delta['type'] == 'text_delta':
-                    callback(delta['text'])
-                
-                elif delta['type'] == 'input_json_delta':
-                    # 도구 입력 누적
-                    if tool_calls:
-                        partial_json = delta.get('partial_json', '')
-                        # JSON 파싱은 마지막에 한 번에
-        
-        return tool_calls
-```
 
 ---
 
-### TASK-102: 채팅 UI 구현
-**Depends on**: TASK-004, TASK-101
+### TASK-202: ComplaintService — 대화 왕복 조율
+**Depends on**: TASK-201, TASK-101
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Streamlit의 채팅 컴포넌트로 대화 UI를 만듭니다.
+학생 메시지마다 대화를 기록하고 Bedrock을 호출해 다음 턴을 조율합니다.
 
 **Acceptance Criteria**:
-- [ ] 왼쪽 패널에 채팅 영역 배치
-- [ ] `st.chat_input()`으로 메시지 입력
-- [ ] `st.chat_message()`로 대화 이력 표시
-- [ ] 메시지를 `st.session_state.messages`에 저장
-- [ ] 새로고침해도 이력 유지
+- [ ] `send_message(draft_key, student_message)`: 학생 발화 기록 → 전체 대화 로드 → `refine_complaint` 호출 → AI 응답도 기록 → 결과 반환
+- [ ] `db.add_conversation_turn`, `db.get_conversation` 구현 (draft_key 기준)
+- [ ] `is_complete=False`이면 `follow_up_question`을 AI 메시지로 기록
+- [ ] `is_complete=True`이면 요약 메시지("[정리 완료] {제목}")를 AI 메시지로 기록
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py
-import streamlit as st
-
-# 초기화
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
-
-# 레이아웃
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.subheader("대화")
-    
-    # 이력 표시
-    for msg in st.session_state.messages:
-        with st.chat_message(msg['role']):
-            st.write(msg['content'])
-    
-    # 입력
-    user_input = st.chat_input("메시지를 입력하세요")
-    
-    if user_input:
-        # 사용자 메시지 표시
-        st.session_state.messages.append({
-            'role': 'user',
-            'content': user_input
-        })
-        st.rerun()
-
-with col2:
-    st.subheader("문서")
-    st.write("(아직 구현 안 됨)")
-```
+- `lib/complaint_service.py`, `lib/database_manager.py`
 
 ---
 
-### TASK-103: Bedrock 응답 스트리밍 연결
-**Depends on**: TASK-101, TASK-102
+### TASK-203: 학생 채팅 UI (대화형 정제)
+**Depends on**: TASK-202, TASK-103
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-사용자 메시지에 Bedrock으로 응답하고 스트리밍 토큰을 화면에 표시합니다.
+학생이 자연어로 입력하고, 부족하면 AI가 되묻고, 충분하면 미리보기가 뜨는 채팅 UI를 구현합니다.
 
 **Acceptance Criteria**:
-- [ ] 사용자 메시지 입력 시 Bedrock 호출
-- [ ] 응답 토큰이 도착하는 대로 화면 갱신
-- [ ] 응답 완료 시 `st.session_state.messages`에 저장
-- [ ] 오류 발생 시 `st.error()` 표시
+- [ ] 새 작성 시작 시 `st.session_state.draft_key = str(uuid4())`
+- [ ] `st.chat_input()`으로 입력 → `ComplaintService.send_message()` 호출
+- [ ] 대화 이력을 `st.chat_message()`로 시간순 표시
+- [ ] `is_complete=False`: 다음 입력을 계속 받음 (잠금 없음)
+- [ ] `is_complete=True`: 미리보기 카드(카테고리/위치/제목/본문) + "정식 접수하기" 버튼 표시
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (이어서)
-from lib.bedrock_client import BedrockClient
-
-if 'bedrock_client' not in st.session_state:
-    st.session_state.bedrock_client = BedrockClient()
-
-if user_input:
-    st.session_state.messages.append({'role': 'user', 'content': user_input})
-    
-    with st.chat_message('user'):
-        st.write(user_input)
-    
-    with st.chat_message('assistant'):
-        response_placeholder = st.empty()
-        full_response = ""
-        
-        def token_callback(token: str):
-            nonlocal full_response
-            full_response += token
-            response_placeholder.markdown(full_response)
-        
-        try:
-            tool_calls = st.session_state.bedrock_client.stream_with_tools(
-                messages=st.session_state.messages,
-                tools=[],  # 아직 도구 없음
-                callback=token_callback
-            )
-            
-            st.session_state.messages.append({
-                'role': 'assistant',
-                'content': full_response
-            })
-        
-        except Exception as e:
-            st.error(f"오류: {e}")
-```
+- `pages/student_view.py`
 
 ---
 
-## M2: 문서 생성과 표시
-
-### TASK-201: DocumentCore 구현
-**Depends on**: TASK-003
+### TASK-204: 정식 접수 처리
+**Depends on**: TASK-203
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-문서를 줄 단위로 관리하고 제안 버퍼를 처리하는 코어 로직을 구현합니다.
+"정식 접수하기" 클릭 시에만 `complaints` 테이블에 저장하고, 대화 기록에 `complaint_id`를 연결합니다.
 
 **Acceptance Criteria**:
-- [ ] `Line` dataclass 정의 (id, line_order, content, is_temp)
-- [ ] `Edit` dataclass 정의 (type, line_id, texts 등)
-- [ ] `DocumentCore` 클래스 생성
-- [ ] `read()` 메서드: 제안 반영된 가상 뷰 반환
-- [ ] `propose_replace()`, `propose_insert()`, `propose_delete()` 구현
-- [ ] `calculate_diff()`: 텍스트 diff 생성
-- [ ] `accept_proposal()`, `reject_proposal()` 구현
+- [ ] `ComplaintService.submit()` → `db.create_complaint()` 호출
+- [ ] 접수 성공 시 해당 `draft_key`의 모든 대화 행이 새 `complaint_id`로 연결됨
+- [ ] 접수 후 `draft_key`를 새로 발급해 다음 민원 작성이 이전 대화와 섞이지 않음
+- [ ] 접수 직후 게시판이 재조회되어 새 항목이 보임
 
 **Files to modify**:
-- `lib/document_core.py`
-
-**Implementation**: (design.md의 DocumentCore 참조)
+- `pages/student_view.py`, `lib/complaint_service.py`
 
 ---
 
-### TASK-202: 문서 패널 UI
-**Depends on**: TASK-102, TASK-201
+## M3: 학교별 게시판 & 철회
+
+### TASK-301: 학생 게시판 (school_id 스코프)
+**Depends on**: TASK-204
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-오른쪽 패널에 문서를 마크다운으로 표시합니다.
+소속 학교 민원만 익명으로 나열합니다. 다른 학교 데이터는 조회 자체가 불가능해야 합니다.
 
 **Acceptance Criteria**:
-- [ ] `st.session_state.doc_core` 초기화
-- [ ] 오른쪽 칸에 문서 내용 표시 (`st.markdown()`)
-- [ ] 줄이 없으면 "아직 문서가 없습니다" 메시지
-- [ ] 다운로드 버튼 (`st.download_button()`)
-- [ ] `.md` 파일로 내보내기
+- [ ] `db.list_complaints(school_id)`가 항상 `school_id` WHERE 조건을 포함 (DB 레이어 필수 계약)
+- [ ] `status != '철회'`인 항목만 반환
+- [ ] 카테고리/위치/제목/본문/접수시각/상태 배지 표시 (미확인/확인/처리중/해결완료/보류/거절 6종 구분)
+- [ ] "대화 원문 보기" 토글로 `complaint_conversations` 전체를 시간순 표시
+- [ ] `db.get_comments(complaint_id)`로 관리자 코멘트를 함께 표시 (`is_hold_reason=True`인 코멘트는 "보류 사유"로 강조)
+- [ ] `submitted_by_user_id`는 화면에 절대 출력하지 않음 (내 글 판별용으로만 클라이언트에서 비교)
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (오른쪽 패널)
-from lib.document_core import DocumentCore
-
-if 'doc_core' not in st.session_state:
-    st.session_state.doc_core = DocumentCore()
-
-with col2:
-    st.subheader("문서")
-    
-    lines = st.session_state.doc_core.read()
-    
-    if not lines:
-        st.info("아직 문서가 없습니다. 대화에서 '민원 문서로 작성해줘'라고 요청하세요.")
-    else:
-        doc_text = '\n'.join(line.content for line in lines)
-        st.markdown(doc_text)
-        
-        st.download_button(
-            label="📥 다운로드",
-            data=doc_text,
-            file_name="complaint.md",
-            mime="text/markdown"
-        )
-```
+- `pages/student_view.py`, `lib/database_manager.py`
 
 ---
 
-### TASK-203: ToolExecutor 구현
-**Depends on**: TASK-201
+### TASK-302: 민원 철회 (비밀번호 재확인)
+**Depends on**: TASK-301
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Bedrock 도구 호출을 DocumentCore 메서드로 라우팅하는 executor를 구현합니다.
+본인이 접수한 민원에 한해 철회 버튼을 보여주고, 비밀번호 확인 후 상태를 `철회`로 전환합니다.
 
 **Acceptance Criteria**:
-- [ ] `ToolExecutor` 클래스 생성
-- [ ] `_define_tools()`: Bedrock 도구 스키마 정의
-- [ ] `execute(tool_call)`: 도구 실행 및 결과 반환
-- [ ] `read_document` 도구 구현
-- [ ] `propose_replace_line`, `propose_insert_lines`, `propose_delete_lines` 구현
-- [ ] `propose_replace_document` 구현
-- [ ] 오류를 예외가 아니라 결과 dict에 담기
+- [ ] `complaint["submitted_by_user_id"] == st.session_state.user_id`인 항목에만 철회 버튼 표시
+- [ ] 클릭 시 비밀번호 입력 폼 (`st.form`)이 뜬다
+- [ ] `ComplaintService.withdraw(complaint_id, user_id, password)`:
+  - 비밀번호 불일치 → "비밀번호가 올바르지 않습니다", 상태 불변
+  - 일치 → `db.withdraw_complaint()` 호출, `status='철회'`
+- [ ] `db.withdraw_complaint()`는 `submitted_by_user_id` 일치 조건을 WHERE에 포함 (타인 글 철회 방어)
+- [ ] 철회 성공 시 게시판에서 즉시 사라짐 (`st.rerun()`)
 
 **Files to modify**:
-- `lib/tool_executor.py`
-
-**Implementation**: (design.md의 ToolExecutor 참조)
+- `lib/complaint_service.py`, `lib/database_manager.py`, `pages/student_view.py`
 
 ---
 
-### TASK-204: 도구 호출 통합
-**Depends on**: TASK-103, TASK-203
+## M4: 관리자 대시보드 (열람 자동확인 · 3단 결정 · 코멘트)
+
+### TASK-401: DatabaseManager 상태 전이 메서드 구현
+**Depends on**: TASK-301
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Bedrock이 반환한 도구 호출을 ToolExecutor로 실행하고 결과를 처리합니다.
+상태 전이를 5개 메서드로 분리 구현합니다. 각 메서드는 선행 상태를 WHERE에 포함해 순서를 강제합니다.
 
 **Acceptance Criteria**:
-- [ ] `st.session_state.tool_executor` 초기화
-- [ ] Bedrock 응답의 tool_calls를 ToolExecutor에 전달
-- [ ] 도구 실행 결과를 다음 대화 맥락에 추가
-- [ ] `read_document` 호출 시 문서 잠금 (`st.session_state.locked = True`)
-- [ ] 도구 이름을 화면에 표시 (`st.info("read_document 호출 중...")`)
+- [ ] `confirm_complaint(id, school_id)`: `WHERE status='미확인'` 조건으로 `확인`+`confirmed_at` 갱신. 이미 확인 이후 상태면 아무 것도 하지 않음 (재호출 안전)
+- [ ] `accept_complaint(id, school_id) -> bool`: `WHERE status='확인'` 조건으로 `처리중` 전환, 실패 시 `False`
+- [ ] `resolve_complaint(id, school_id) -> bool`: `WHERE status='처리중'` 조건으로 `해결완료` 전환
+- [ ] `hold_complaint(id, school_id, author_user_id, reason) -> bool`: `WHERE status='확인'` 조건으로 `보류` 전환 **+ 같은 트랜잭션에서 `complaint_comments`에 `is_hold_reason=1` 코멘트 삽입**. 상태 전환이 실패하면 코멘트도 삽입되지 않음 (rollback)
+- [ ] `reject_complaint(id, school_id) -> bool`: `WHERE status='확인'` 조건으로 `거절` 전환
+- [ ] `add_comment(complaint_id, author_user_id, content)`: 상태 무관, 항상 `complaint_comments`에 INSERT
+- [ ] `get_comments(complaint_id) -> list[dict]`: 시간순 반환, `is_hold_reason` 포함
+- [ ] `get_complaint(id, school_id) -> dict | None`: 단일 민원 조회 (school_id 스코프)
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (Bedrock 호출 부분)
-from lib.tool_executor import ToolExecutor
-
-if 'tool_executor' not in st.session_state:
-    st.session_state.tool_executor = ToolExecutor(st.session_state.doc_core)
-
-if user_input:
-    # ... (이전과 동일)
-    
-    tool_calls = st.session_state.bedrock_client.stream_with_tools(
-        messages=st.session_state.messages,
-        tools=st.session_state.tool_executor.tools,
-        callback=token_callback
-    )
-    
-    # 도구 호출 처리
-    if tool_calls:
-        for tc in tool_calls:
-            st.info(f"도구 호출: {tc['name']}")
-            
-            # 첫 read에서 잠금
-            if tc['name'] == 'read_document':
-                st.session_state.locked = True
-            
-            result = st.session_state.tool_executor.execute(tc)
-            
-            # 결과를 대화에 추가 (Claude는 tool_result를 요구)
-            st.session_state.messages.append({
-                'role': 'user',  # tool_result는 user role
-                'content': [{
-                    'type': 'tool_result',
-                    'tool_use_id': tc['id'],
-                    'content': json.dumps(result)
-                }]
-            })
-```
+- `lib/database_manager.py`
 
 ---
 
-## M3: 제안과 승인 (핵심)
-
-### TASK-301: ProposalManager 구현
-**Depends on**: TASK-201
+### TASK-402: ComplaintService 상태 전이 래핑
+**Depends on**: TASK-401
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-제안의 TTL, 생성/처리 시점을 관리하는 매니저를 구현합니다.
+DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보류는 빈 사유를 서비스 레이어에서 먼저 거부합니다.
 
 **Acceptance Criteria**:
-- [ ] `ProposalManager` 클래스 생성
-- [ ] `has_proposal()`: 살아있는 제안이 있는지 (TTL 확인)
-- [ ] `create_proposal()`: 제안 시작 시각 기록
-- [ ] `clear_proposal()`: 제안 처리 완료
-- [ ] 만료된 제안 자동 거절
+- [ ] `open_detail(complaint_id, school_id)`: `db.confirm_complaint()` 호출 (반환값 없음, 사이드이펙트만)
+- [ ] `accept/resolve/reject(complaint_id, school_id) -> (bool, str)`: 성공/실패 메시지 반환
+- [ ] `hold(complaint_id, school_id, author_user_id, reason) -> (bool, str)`: `reason.strip()`이 빈 문자열이면 DB 호출 없이 `(False, "보류 사유를 입력해야 합니다")` 반환
+- [ ] `add_comment(complaint_id, author_user_id, content) -> (bool, str)`: 빈 값 검증
 
 **Files to modify**:
-- `lib/proposal_manager.py`
-
-**Implementation**: (design.md의 ProposalManager 참조)
+- `lib/complaint_service.py`
 
 ---
 
-### TASK-302: diff 표시 UI
-**Depends on**: TASK-202, TASK-301
+### TASK-403: 통계 카드 & 필터 탭
+**Depends on**: TASK-103, TASK-301
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-제안이 생기면 화면 하단에 diff를 표시합니다.
+소속 학교 민원의 전체/상태별 건수를 보여주고, 탭으로 목록을 좁힙니다.
 
 **Acceptance Criteria**:
-- [ ] `st.session_state.proposal_manager` 초기화
-- [ ] 제안 버퍼가 비지 않으면 diff 계산
-- [ ] `st.expander("제안 대기 중")`로 diff 표시
-- [ ] 추가 줄은 `🟢 +`, 삭제 줄은 `🔴 −`로 구분
-- [ ] "적용" / "취소" 버튼 배치
+- [ ] `db.get_complaint_stats(school_id)`: 전체 + 6상태(미확인/확인/처리중/해결완료/보류/거절), 철회 제외
+- [ ] 통계 카드 7개 렌더링
+- [ ] 필터 탭 클릭 시 `db.list_complaints(school_id, status=선택값)`로 목록 갱신
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (문서 패널 아래)
-from lib.proposal_manager import ProposalManager
-
-if 'proposal_manager' not in st.session_state:
-    st.session_state.proposal_manager = ProposalManager()
-
-pm = st.session_state.proposal_manager
-
-if pm.has_proposal(st.session_state.doc_core):
-    with st.expander("📝 제안 대기 중", expanded=True):
-        diff = st.session_state.doc_core.calculate_diff()
-        
-        for line in diff:
-            if line.startswith('+'):
-                st.markdown(f"🟢 **{line}**")
-            elif line.startswith('-'):
-                st.markdown(f"🔴 ~~{line}~~")
-            else:
-                st.write(line)
-        
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            if st.button("✓ 적용", type="primary"):
-                # TASK-303에서 구현
-                pass
-        
-        with col_b:
-            if st.button("✗ 취소"):
-                # TASK-303에서 구현
-                pass
-```
+- `pages/admin_view.py`
 
 ---
 
-### TASK-303: 적용/취소 버튼 구현
-**Depends on**: TASK-302
+### TASK-404: 관리자 목록 테이블 & 상세 화면 (열람 시 자동 확인)
+**Depends on**: TASK-402, TASK-403
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-제안을 적용하거나 거절하는 버튼 동작을 구현합니다.
+표에서 민원을 클릭하면 상세 화면이 열리면서 그 즉시 `미확인 → 확인`으로 자동 전환됩니다.
 
 **Acceptance Criteria**:
-- [ ] "적용" 버튼: `doc_core.accept_proposal()` 호출
-- [ ] 적용 시 되돌리기 스택에 스냅샷 추가
-- [ ] 적용 결과를 대화에 기록 (`role='note'`)
-- [ ] "취소" 버튼: `doc_core.reject_proposal()` 호출
-- [ ] 거절 결과를 대화에 기록
-- [ ] 둘 다 잠금 해제 (`st.session_state.locked = False`)
-- [ ] `st.rerun()`으로 UI 갱신
+- [ ] `st.columns()`로 ID/분류·위치/제목/접수시각/상태 렌더링 (조치 버튼은 상세 화면에만 — 목록에는 없음)
+- [ ] 행 클릭 시 `st.session_state.selected_complaint_id` 설정과 **같은 처리 흐름에서** `ComplaintService.open_detail(id, school_id)` 호출
+- [ ] 상세 화면에 학생-AI 대화 전체(`get_conversation_by_complaint`)와 최종 카테고리/위치/제목/본문 표시
+- [ ] 상세 화면을 다시 열어도(이미 확인 이후 상태) 에러 없이 정상 표시됨 (재호출 안전성 검증)
+- [ ] 목록·상세 어디에도 철회 버튼은 없음 (관리자는 철회 불가)
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (제안 버튼 부분)
-
-if 'undo_stack' not in st.session_state:
-    st.session_state.undo_stack = []
-if 'redo_stack' not in st.session_state:
-    st.session_state.redo_stack = []
-
-with col_a:
-    if st.button("✓ 적용", type="primary"):
-        # 되돌리기 스택에 추가
-        snapshot = st.session_state.doc_core.accept_proposal()
-        st.session_state.undo_stack.append(snapshot)
-        st.session_state.redo_stack.clear()
-        
-        # 제안 정리
-        st.session_state.proposal_manager.clear_proposal()
-        st.session_state.locked = False
-        
-        # 결과 기록
-        st.session_state.messages.append({
-            'role': 'note',
-            'content': '제안이 적용되었습니다.'
-        })
-        
-        st.rerun()
-
-with col_b:
-    if st.button("✗ 취소"):
-        st.session_state.doc_core.reject_proposal()
-        st.session_state.proposal_manager.clear_proposal()
-        st.session_state.locked = False
-        
-        st.session_state.messages.append({
-            'role': 'note',
-            'content': '제안이 거절되었습니다.'
-        })
-        
-        st.rerun()
-```
+- `pages/admin_view.py`
 
 ---
 
-### TASK-304: 잠금 UI 표시
-**Depends on**: TASK-302
+### TASK-405: 결정 버튼 — 수락/보류/거절 (확인 상태에서만 노출)
+**Depends on**: TASK-404
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-제안 대기 중에는 채팅 입력과 문서 편집을 막습니다.
+`확인` 상태의 민원 상세 화면에서만 수락/보류/거절 버튼을 노출합니다. 보류는 코멘트 입력 모달을 필수로 거칩니다.
 
 **Acceptance Criteria**:
-- [ ] `st.session_state.locked == True`이면 채팅 입력 비활성화
-- [ ] 문서 편집 텍스트 영역 비활성화
-- [ ] 잠금 사유를 화면 상단에 표시 (`st.warning()`)
-- [ ] 제안 처리 시 잠금 자동 해제
+- [ ] 현재 상태가 `확인`일 때만 [수락][보류][거절] 세 버튼이 보임 (`미확인`·`처리중`·`해결완료`·`보류`·`거절` 상태에서는 안 보임)
+- [ ] "수락" 클릭 → `ComplaintService.accept()` → 성공 시 `처리중`으로 전환, `st.rerun()`
+- [ ] "보류" 클릭 → `st.session_state.hold_modal_open = True`로 모달 오픈 (버튼 클릭 즉시 전환되지 않음)
+- [ ] 모달 내 코멘트 입력창이 비어 있으면 "보류 확정" 버튼이 비활성화되거나, 제출 시 `ComplaintService.hold()`가 거부하고 에러 메시지 표시
+- [ ] 모달에서 사유를 입력하고 확정하면 `보류` 전환 + 코멘트 등록이 동시에 반영, 모달 닫힘
+- [ ] "거절" 클릭 → `ComplaintService.reject()` → 성공 시 즉시 `거절`로 전환 (코멘트 입력 없이 즉시)
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (채팅 입력 부분)
-
-# 잠금 상태 표시
-if st.session_state.get('locked'):
-    st.warning("⚠️ 제안을 처리해야 합니다. 적용 또는 취소를 선택하세요.")
-
-# 채팅 입력 (잠금 시 비활성화)
-user_input = st.chat_input(
-    "메시지를 입력하세요",
-    disabled=st.session_state.get('locked', False)
-)
-```
+- `pages/admin_view.py`
 
 ---
 
-## M4: 사용자 편집
-
-### TASK-401: 문서 편집 텍스트 영역
-**Depends on**: TASK-202
+### TASK-406: 처리중 → 해결완료 전환
+**Depends on**: TASK-405
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-사용자가 문서를 직접 수정할 수 있는 텍스트 영역을 추가합니다.
+`처리중` 상태의 민원 상세 화면에는 "해결 완료" 버튼만 노출됩니다.
 
 **Acceptance Criteria**:
-- [ ] "편집 모드" 토글 버튼
-- [ ] 편집 모드에서 `st.text_area()` 표시
-- [ ] 텍스트 영역에 현재 문서 내용 로드
-- [ ] "저장" 버튼으로 변경사항 반영
-- [ ] 줄 단위로 파싱해 `doc_core.lines` 갱신
-- [ ] 잠금 중에는 편집 불가
+- [ ] 현재 상태가 `처리중`일 때만 [해결 완료] 버튼이 보임
+- [ ] 클릭 → `ComplaintService.resolve()` → 성공 시 `해결완료`로 전환, `st.rerun()`
+- [ ] `해결완료`는 최종 상태 — 이후 버튼이 아무것도 안 보임 (코멘트 입력창은 계속 보임)
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (문서 패널)
-
-edit_mode = st.toggle("편집 모드", disabled=st.session_state.get('locked'))
-
-if edit_mode:
-    doc_text = '\n'.join(line.content for line in st.session_state.doc_core.lines)
-    
-    edited_text = st.text_area(
-        "문서 편집",
-        value=doc_text,
-        height=400
-    )
-    
-    if st.button("💾 저장"):
-        # 줄 단위로 파싱
-        new_lines = [
-            Line(id=str(uuid4()), line_order=i, content=content)
-            for i, content in enumerate(edited_text.split('\n'))
-        ]
-        
-        # 되돌리기 스택에 추가
-        snapshot = Snapshot(lines=st.session_state.doc_core.lines.copy())
-        st.session_state.undo_stack.append(snapshot)
-        st.session_state.redo_stack.clear()
-        
-        # 문서 갱신
-        st.session_state.doc_core.lines = new_lines
-        st.rerun()
-else:
-    # 읽기 전용 표시
-    doc_text = '\n'.join(line.content for line in st.session_state.doc_core.lines)
-    st.markdown(doc_text)
-```
+- `pages/admin_view.py`
 
 ---
 
-### TASK-402: 실행취소/다시실행 버튼
-**Depends on**: TASK-303, TASK-401
+### TASK-407: 코멘트 상시 입력 (상태 무관)
+**Depends on**: TASK-402, TASK-404
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-문서 변경을 되돌리거나 복구하는 버튼을 추가합니다.
+민원 상태와 무관하게 언제든 코멘트를 추가할 수 있는 입력창을 상세 화면에 배치합니다.
 
 **Acceptance Criteria**:
-- [ ] "↶ 실행취소" 버튼 (undo_stack이 비지 않을 때만 활성화)
-- [ ] "↷ 다시실행" 버튼 (redo_stack이 비지 않을 때만 활성화)
-- [ ] 실행취소: 스택에서 스냅샷을 꺼내 문서 복원
-- [ ] 다시실행: redo_stack에서 꺼내 적용
-- [ ] 잠금 중에는 버튼 비활성화
+- [ ] 상세 화면 하단에 코멘트 목록(`get_comments`, 시간순)과 입력창이 항상 존재
+- [ ] `is_hold_reason=True`인 코멘트는 "보류 사유"로 시각적으로 구분 표시
+- [ ] 입력창에 텍스트를 넣고 "등록" 클릭 → `ComplaintService.add_comment()` 호출 → `st.rerun()`
+- [ ] `미확인`·`해결완료`·`거절` 등 어떤 상태에서도 코멘트 입력이 막히지 않음
 
 **Files to modify**:
-- `app.py`
-
-**Implementation**:
-```python
-# app.py (문서 패널, 다운로드 버튼 옆)
-
-col_undo, col_redo = st.columns(2)
-
-with col_undo:
-    if st.button(
-        "↶ 실행취소",
-        disabled=not st.session_state.undo_stack or st.session_state.get('locked')
-    ):
-        snapshot = st.session_state.undo_stack.pop()
-        
-        # 현재 상태를 redo에 추가
-        redo_snapshot = Snapshot(lines=st.session_state.doc_core.lines.copy())
-        st.session_state.redo_stack.append(redo_snapshot)
-        
-        # 복원
-        st.session_state.doc_core.lines = snapshot.lines
-        st.rerun()
-
-with col_redo:
-    if st.button(
-        "↷ 다시실행",
-        disabled=not st.session_state.redo_stack or st.session_state.get('locked')
-    ):
-        snapshot = st.session_state.redo_stack.pop()
-        
-        # 현재 상태를 undo에 추가
-        undo_snapshot = Snapshot(lines=st.session_state.doc_core.lines.copy())
-        st.session_state.undo_stack.append(undo_snapshot)
-        
-        # 복원
-        st.session_state.doc_core.lines = snapshot.lines
-        st.rerun()
-```
+- `pages/admin_view.py`
 
 ---
 
 ## M5: 대회 제출
 
-### TASK-501: TEAM_GUIDE.html 작성
+### TASK-501: TEAM_GUIDE.html 최신화
 **Depends on**: -
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-팀 인프라 구축 및 배포 가이드 문서를 작성합니다.
+기존 `connectionTest/TEAM_GUIDE.html`은 인프라 구축 가이드로 그대로 유효합니다. UniVoice 데모 시나리오만 추가합니다.
 
 **Acceptance Criteria**:
-- [ ] HTML 파일 생성
-- [ ] 팀 정보 (팀명, 팀원, 역할)
-- [ ] 프로젝트 개요 및 아키텍처
-- [ ] 로컬 실행 방법
-- [ ] EC2 배포 방법
-- [ ] Bedrock 사용량 모니터링 방법
-- [ ] 트러블슈팅 가이드
+- [ ] 데모 절차: 학생 가입(도메인 이메일) → 민원 대화 작성 → 접수 → 관리자 가입(코드 입력) → 상태 변경 → 학생 게시판 확인 → 철회 시연
+- [ ] 시드된 데모 학교/도메인/관리자 코드 값 명시
 
-**Files to create**:
-- `TEAM_GUIDE.html`
+**Files to modify**:
+- `connectionTest/TEAM_GUIDE.html`
 
 ---
 
 ### TASK-502: README.md 업데이트
 **Depends on**: -
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-프로젝트 루트의 README를 대회용으로 업데이트합니다.
+프로젝트 루트 README를 UniVoice 기준으로 업데이트합니다.
 
 **Acceptance Criteria**:
-- [ ] 프로젝트 제목 및 설명
-- [ ] 핵심 기능 (제안/승인 흐름 강조)
-- [ ] 기술 스택 (Bedrock, Streamlit)
-- [ ] 실행 방법 (로컬 + EC2)
-- [ ] 데모 시나리오 (스크린샷)
+- [ ] 서비스 개요 (학교별 익명 민원 + AI 대화형 정제)
+- [ ] 기술 스택 (Bedrock, Streamlit, SQLite)
+- [ ] 실행 방법: `init_db.py` → `seed_schools.py` → `streamlit run app.py`
+- [ ] 데모 계정/도메인/코드 안내
 - [ ] 팀 정보
 
 **Files to modify**:
@@ -861,63 +538,33 @@ with col_redo:
 
 ---
 
-### TASK-503: 세션 로컬 저장
-**Depends on**: TASK-102
+### TASK-503: DB 백업 스크립트
+**Depends on**: TASK-003
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-세션 데이터를 `data/sessions.json`에 저장하고 복원합니다.
+SQLite 데이터베이스를 주기적으로 백업합니다. (기존 설계 그대로 유지)
 
 **Acceptance Criteria**:
-- [ ] 앱 시작 시 `data/sessions.json` 로드
-- [ ] 세션이 없으면 빈 리스트로 초기화
-- [ ] 메시지 추가 시 자동 저장
-- [ ] 문서 변경 시 자동 저장
-- [ ] JSON 직렬화 가능한 형태로 변환
+- [ ] `backup_db.py`: 타임스탬프 파일명으로 `data/backups/`에 복사
+- [ ] cron으로 매일 실행, 7일 이상 된 백업 자동 삭제
 
-**Files to modify**:
-- `app.py`
-- `lib/storage.py` (new)
-
-**Implementation**:
-```python
-# lib/storage.py
-import json
-from pathlib import Path
-
-DATA_DIR = Path('data')
-DATA_DIR.mkdir(exist_ok=True)
-
-def save_sessions(sessions: list):
-    with open(DATA_DIR / 'sessions.json', 'w') as f:
-        json.dump(sessions, f, indent=2, ensure_ascii=False)
-
-def load_sessions() -> list:
-    path = DATA_DIR / 'sessions.json'
-    if not path.exists():
-        return []
-    
-    with open(path) as f:
-        return json.load(f)
-```
+**Files to create**:
+- `backup_db.py`
 
 ---
 
 ### TASK-504: EC2 배포 스크립트
-**Depends on**: TASK-004
+**Depends on**: TASK-102
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-EC2에서 한 번에 배포할 수 있는 스크립트를 작성합니다.
+EC2에서 한 번에 배포하는 스크립트를 작성합니다.
 
 **Acceptance Criteria**:
-- [ ] `deploy.sh` 파일 생성
-- [ ] git clone, pip install 자동화
-- [ ] secrets.toml 생성 가이드
-- [ ] nohup으로 백그라운드 실행
-- [ ] 로그 확인 명령 포함
+- [ ] `deploy.sh`: pip install → `init_db.py` → `seed_schools.py` → nohup streamlit 실행
+- [ ] Instance Profile 인증이므로 AWS 자격증명 설정 단계 없음
+- [ ] 접속 주소와 로그 확인 명령 출력
 
 **Files to create**:
 - `deploy.sh`
@@ -925,209 +572,47 @@ EC2에서 한 번에 배포할 수 있는 스크립트를 작성합니다.
 **Implementation**:
 ```bash
 #!/bin/bash
-# deploy.sh
-
 set -e
-
-echo "=== 민원 작성 도우미 배포 스크립트 ==="
-
-# 1. 패키지 설치
-echo "패키지 설치 중..."
+echo "=== UniVoice 배포 스크립트 ==="
 pip3 install -r requirements.txt
-
-# 2. secrets.toml 확인
-if [ ! -f .streamlit/secrets.toml ]; then
-    echo "ERROR: .streamlit/secrets.toml 파일이 없습니다."
-    echo "secrets.toml.example을 복사해 AWS 자격증명을 입력하세요."
-    exit 1
-fi
-
-# 3. 데이터 디렉토리 생성
+python3 init_db.py
+python3 seed_schools.py
 mkdir -p data
-
-# 4. Streamlit 실행
-echo "Streamlit 실행 중..."
-nohup streamlit run app.py --server.port 8501 > streamlit.log 2>&1 &
-
-echo "배포 완료!"
-echo "접속 주소: http://$(curl -s ifconfig.me):8501"
+nohup python3 -m streamlit run app.py --server.address 0.0.0.0 --server.port 8501 \
+  > streamlit.log 2>&1 < /dev/null &
+echo "배포 완료! 접속 주소: http://$(curl -s ifconfig.me):8501"
 echo "로그 확인: tail -f streamlit.log"
 ```
 
 ---
 
 ### TASK-505: Bedrock 사용량 모니터링
-**Depends on**: TASK-101
+**Depends on**: TASK-201
 **Status**: OPEN
-**Assigned to**: 
 
 **Description**:
-Bedrock API 호출 횟수와 토큰 사용량을 로깅합니다.
+Bedrock 호출 횟수를 로깅합니다.
 
 **Acceptance Criteria**:
-- [ ] 각 Bedrock 호출 시 로그 기록
-- [ ] 호출 시각, 모델 ID, 입력/출력 토큰 수 기록
-- [ ] `data/bedrock_usage.log` 파일에 추가
-- [ ] 누적 토큰 수를 화면에 표시
+- [ ] `refine_complaint()` 호출마다 호출 시각/모델 ID를 `data/bedrock_usage.log`에 기록
+- [ ] `is_complete` 여부(되묻기 vs 확정)도 함께 기록해 대화 왕복 빈도를 파악할 수 있게 함
 
 **Files to modify**:
 - `lib/bedrock_client.py`
-- `app.py` (사이드바에 통계 표시)
-
-**Implementation**:
-```python
-# lib/bedrock_client.py (로깅 추가)
-import logging
-
-logging.basicConfig(
-    filename='data/bedrock_usage.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(message)s'
-)
-
-class BedrockClient:
-    def stream_with_tools(self, ...):
-        input_tokens = sum(len(m['content'].split()) for m in messages)  # 근사치
-        
-        logging.info(f"Bedrock 호출 - 모델: {self.model_id}, 입력 토큰: ~{input_tokens}")
-        
-        # ... (기존 로직)
-        
-        output_tokens = len(full_response.split())
-        logging.info(f"Bedrock 응답 - 출력 토큰: ~{output_tokens}")
-```
-
----
-
-## M6: RAG 통합 (선택)
-
-### TASK-601: 민원 양식 샘플 수집
-**Depends on**: -
-**Status**: OPEN
-**Assigned to**: 
-
-**Description**:
-민원서 양식 예시 3~5개를 마크다운으로 작성합니다.
-
-**Acceptance Criteria**:
-- [ ] `data/samples/` 디렉토리 생성
-- [ ] 각 샘플을 `.md` 파일로 저장
-- [ ] 제목, 발생 일시, 상황 설명, 요청 사항 포함
-
-**Files to create**:
-- `data/samples/complaint_1.md`
-- `data/samples/complaint_2.md`
-- `data/samples/complaint_3.md`
-
----
-
-### TASK-602: FAISS 인덱싱
-**Depends on**: TASK-601
-**Status**: OPEN
-**Assigned to**: 
-
-**Description**:
-민원 샘플을 FAISS로 인덱싱하는 스크립트를 작성합니다.
-
-**Acceptance Criteria**:
-- [ ] `bedrock_faiss_indexer.py` 파일 생성
-- [ ] Bedrock Embeddings로 벡터 생성
-- [ ] FAISS 인덱스에 저장 (`faiss_index/index.faiss`)
-- [ ] 메타데이터 JSON 저장 (파일명, 내용)
-- [ ] 인덱싱 성공 메시지 출력
-
-**Files to create**:
-- `bedrock_faiss_indexer.py`
-
-**Implementation**:
-```python
-# bedrock_faiss_indexer.py
-import boto3
-import json
-import faiss
-import numpy as np
-from pathlib import Path
-
-def index_samples():
-    bedrock = boto3.client('bedrock-runtime')
-    
-    # 샘플 로드
-    samples = []
-    for path in Path('data/samples').glob('*.md'):
-        with open(path) as f:
-            samples.append({
-                'filename': path.name,
-                'content': f.read()
-            })
-    
-    # 임베딩 생성
-    embeddings = []
-    for sample in samples:
-        response = bedrock.invoke_model(
-            modelId='amazon.titan-embed-text-v1',
-            body=json.dumps({"inputText": sample['content']})
-        )
-        result = json.loads(response['body'].read())
-        embeddings.append(result['embedding'])
-    
-    # FAISS 인덱스 생성
-    dim = len(embeddings[0])
-    index = faiss.IndexFlatL2(dim)
-    index.add(np.array(embeddings).astype('float32'))
-    
-    # 저장
-    Path('faiss_index').mkdir(exist_ok=True)
-    faiss.write_index(index, 'faiss_index/index.faiss')
-    
-    with open('faiss_index/metadata.json', 'w') as f:
-        json.dump(samples, f, ensure_ascii=False)
-    
-    print(f"✓ {len(samples)}개 샘플 인덱싱 완료")
-
-if __name__ == '__main__':
-    index_samples()
-```
-
----
-
-### TASK-603: RAG 검색 통합
-**Depends on**: TASK-602, TASK-204
-**Status**: OPEN
-**Assigned to**: 
-
-**Description**:
-사용자 메시지를 바탕으로 유사 샘플을 검색해 프롬프트에 포함합니다.
-
-**Acceptance Criteria**:
-- [ ] `bedrock_faiss_rag_chatbot.py` 파일 생성
-- [ ] 사용자 메시지로 임베딩 생성
-- [ ] FAISS에서 top-k 검색 (k=2)
-- [ ] 검색 결과를 시스템 프롬프트에 추가
-- [ ] "참고: 유사 사례 2건" UI 표시
-
-**Files to create**:
-- `bedrock_faiss_rag_chatbot.py`
-
-**Files to modify**:
-- `app.py` (RAG 검색 추가)
 
 ---
 
 ## 완료 기준
 
-모든 태스크가 완료되고 아래 조건을 만족하면 대회 제출 준비 완료:
-
-- [ ] M0~M4 태스크 전부 COMPLETE
+- [ ] M0~M4 전체 완료
 - [ ] EC2 공개 IP로 외부 접속 가능
-- [ ] 제안/승인 흐름 데모 가능
-- [ ] `TEAM_GUIDE.html` 작성 완료
-- [ ] README에 실행 방법 명시
-- [ ] Bedrock 사용량 로그 확인 가능
-
----
+- [ ] 데모: 학생 도메인 이메일 가입 → 대화형 작성(되묻기 최소 1회 포함) → 접수(미확인) → 관리자 코드로 가입 →
+      목록에서 클릭(자동 확인) → 수락(처리중) → 해결 완료 / 또는 보류(코멘트 필수) → 학생 게시판 반영 확인 → 철회 시연
+- [ ] 다른 학교 계정으로는 위 데이터가 전혀 보이지 않음을 확인
+- [ ] `TEAM_GUIDE.html`, README 최신화
 
 ## 우선순위
 
-**P0 (필수)**: M0 전체, M1~M3 전체
-**P1 (중요)**: M4 전체, M5 (TASK-501, 502, 503)
-**P2 (선택)**: M5 (TASK-504, 505), M6 전체
+**P0 (필수)**: M0, M1, M2, M3, M4
+**P1 (중요)**: M5 (TASK-501, 502)
+**P2 (선택)**: M5 (TASK-503, 504, 505)

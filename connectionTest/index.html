@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>해커톤 아이디어 카드</title>
+
+  <!-- ====================================================
+       🎨 스타일 영역 — 색상, 글꼴, 레이아웃을 여기서 수정하세요
+       ==================================================== -->
+  <style>
+    /* ── 기본 리셋 ── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+      background: #eef2f7;
+      color: #1a202c;
+      min-height: 100vh;
+      padding: 28px 16px 48px;
+    }
+
+    /* ── 페이지 헤더 ── */
+    .page-header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .page-header h1 {
+      font-size: 1.7rem;
+      color: #2d3748;
+      margin-bottom: 6px;
+    }
+    .page-header p {
+      font-size: 0.9rem;
+      color: #718096;
+    }
+
+    /* ── 전체 레이아웃 ── */
+    .layout {
+      display: flex;
+      gap: 28px;
+      max-width: 1080px;
+      margin: 0 auto;
+      align-items: flex-start;
+    }
+
+    /* 태블릿/모바일: 세로 쌓기 */
+    @media (max-width: 720px) {
+      .layout { flex-direction: column; }
+    }
+
+    /* ════════════════════════════════
+       입력 폼 영역
+       ════════════════════════════════ */
+    .form-section {
+      flex: 1;
+      background: #fff;
+      border-radius: 16px;
+      padding: 28px 24px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+
+    .form-section h2 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #4a5568;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    /* ── 2열 그리드 (프로젝트명 + 주요 사용자) ── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 16px;
+    }
+
+    @media (max-width: 480px) {
+      .form-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ── 입력 필드 공통 ── */
+    .field { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #4a5568;
+      margin-bottom: 6px;
+    }
+
+    input[type="text"],
+    textarea,
+    select {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid #cbd5e0;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      color: #2d3748;
+      background: #f7fafc;
+      transition: border-color 0.18s, background 0.18s;
+    }
+
+    input[type="text"]:focus,
+    textarea:focus,
+    select:focus {
+      outline: none;
+      border-color: #4299e1;
+      background: #fff;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 68px;
+    }
+
+    /* ── 핵심 기능 3개 입력란 ── */
+    .feature-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* ── AWS 태그 영역 ── */
+    /* 선택/추가된 AWS 서비스를 태그로 보여주는 컨테이너 */
+    .aws-tag-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      min-height: 36px;
+      padding: 6px 8px;
+      border: 1.5px solid #cbd5e0;
+      border-radius: 8px;
+      background: #f7fafc;
+      margin-bottom: 8px;
+      cursor: text;
+    }
+
+    /* 각 AWS 서비스 태그 */
+    .aws-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #fff5eb;
+      color: #c05621;
+      border: 1px solid #fbd38d;
+      padding: 3px 10px 3px 10px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    /* 태그 삭제 버튼 (×) */
+    .aws-tag-remove {
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: #dd6b20;
+      line-height: 1;
+      padding: 0 1px;
+      border: none;
+      background: none;
+      font-weight: 700;
+      flex: none;
+    }
+    .aws-tag-remove:hover { color: #9c4221; }
+
+    /* 태그 없을 때 안내 */
+    .aws-tag-placeholder {
+      font-size: 0.82rem;
+      color: #a0aec0;
+      padding: 2px 2px;
+    }
+
+    /* ── 버튼 영역 ── */
+    .button-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    button {
+      flex: 1;
+      padding: 11px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.18s, transform 0.1s;
+    }
+    button:active { transform: scale(0.97); }
+
+    .btn-save  { background: #4299e1; color: #fff; }
+    .btn-save:hover  { background: #3182ce; }
+
+    /* 초기화 버튼 — 빨간색 계열로 위험함을 시각적으로 표현 */
+    .btn-reset { background: #fff5f5; color: #c53030; border: 1.5px solid #feb2b2; }
+    .btn-reset:hover { background: #fed7d7; }
+
+    /* ── 저장 완료 토스트 ── */
+    .toast {
+      display: none;
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: #c6f6d5;
+      color: #276749;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    /* ════════════════════════════════
+       확인 다이얼로그 (커스텀 모달)
+       ════════════════════════════════ */
+    .modal-overlay {
+      display: none;              /* 기본은 숨김 */
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.show { display: flex; }
+
+    .modal-box {
+      background: #fff;
+      border-radius: 14px;
+      padding: 28px 28px 20px;
+      max-width: 340px;
+      width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+      text-align: center;
+    }
+    .modal-icon { font-size: 2rem; margin-bottom: 10px; }
+    .modal-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #2d3748;
+      margin-bottom: 8px;
+    }
+    .modal-desc {
+      font-size: 0.85rem;
+      color: #718096;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+    .modal-buttons {
+      display: flex;
+      gap: 10px;
+    }
+    .modal-btn-cancel {
+      flex: 1; padding: 10px; border: 1.5px solid #cbd5e0;
+      border-radius: 8px; background: #fff; color: #4a5568;
+      font-size: 0.88rem; font-weight: 600; cursor: pointer;
+    }
+    .modal-btn-cancel:hover { background: #f7fafc; }
+    .modal-btn-confirm {
+      flex: 1; padding: 10px; border: none;
+      border-radius: 8px; background: #e53e3e; color: #fff;
+      font-size: 0.88rem; font-weight: 700; cursor: pointer;
+    }
+    .modal-btn-confirm:hover { background: #c53030; }
+
+    /* ════════════════════════════════
+       카드 미리보기 영역
+       ════════════════════════════════ */
+    .preview-section { flex: 1.1; }
+
+    .preview-section h2 {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #4a5568;
+      margin-bottom: 16px;
+    }
+
+    /* 발표자료 스타일 카드 */
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.10);
+    }
+
+    /* 카드 헤더 — 그라디언트 배경 */
+    /* ✏️ 카드 헤더 색상을 바꾸려면 아래 background 값을 수정하세요 */
+    .card-header {
+      background: linear-gradient(135deg, #2b6cb0 0%, #4299e1 100%);
+      padding: 28px 28px 20px;
+      position: relative;
+    }
+
+    .card-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.25);
+      color: #fff;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-bottom: 10px;
+    }
+
+    .card-title {
+      font-size: 1.55rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.3;
+      word-break: keep-all;
+    }
+
+    /* 카드 본문 */
+    .card-body { padding: 20px 28px 24px; }
+
+    /* 카드 섹션 공통 */
+    .card-section { margin-bottom: 18px; }
+    .card-section:last-child { margin-bottom: 0; }
+
+    .card-section-label {
+      font-size: 0.72rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: #a0aec0;
+      margin-bottom: 7px;
+    }
+
+    .card-section-value {
+      font-size: 0.9rem;
+      color: #4a5568;
+      line-height: 1.6;
+      word-break: keep-all;
+    }
+
+    /* 구분선 */
+    .card-divider {
+      height: 1px;
+      background: #e2e8f0;
+      margin: 16px 0;
+    }
+
+    /* 핵심 기능 번호 배지 목록 */
+    .feature-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .feature-num {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ebf8ff;
+      color: #2b6cb0;
+      font-size: 0.75rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+    }
+
+    .feature-text {
+      font-size: 0.88rem;
+      color: #2d3748;
+      line-height: 1.5;
+    }
+
+    /* AWS 서비스 태그 (카드 안) */
+    .card-aws-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 2px;
+    }
+
+    .card-aws-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #fff5eb;
+      color: #c05621;
+      border: 1px solid #fbd38d;
+      padding: 4px 11px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    /* 빈 카드 안내 문구 */
+    .card-empty {
+      background: #fff;
+      border-radius: 16px;
+      padding: 60px 24px;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #a0aec0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      line-height: 1.8;
+    }
+    .card-empty .empty-icon { font-size: 2.2rem; display: block; margin-bottom: 10px; }
+  </style>
+</head>
+
+<body>
+
+  <!-- 페이지 헤더 -->
+  <header class="page-header">
+    <h1>🚀 해커톤 아이디어 카드</h1>
+    <p>아이디어를 입력하면 발표용 카드로 정리해 드립니다</p>
+  </header>
+
+  <div class="layout">
+
+    <!-- ════════════════ 입력 폼 ════════════════ -->
+    <section class="form-section">
+      <h2>✏️ 아이디어 입력</h2>
+
+      <!-- 2열 그리드: 프로젝트명 + 주요 사용자 -->
+      <div class="form-grid">
+        <div class="field">
+          <label for="projectName">프로젝트명</label>
+          <input type="text" id="projectName" placeholder="예) 스마트 농장 모니터링" />
+        </div>
+        <div class="field">
+          <label for="targetUser">주요 사용자</label>
+          <input type="text" id="targetUser" placeholder="예) 소규모 농장 운영자" />
+        </div>
+      </div>
+
+      <!-- 해결 문제 (전체 너비) -->
+      <div class="field">
+        <label for="problem">해결하려는 문제</label>
+        <textarea id="problem" placeholder="예) 농부들이 실시간으로 작물 상태를 파악하기 어렵습니다."></textarea>
+      </div>
+
+      <!-- 핵심 기능 3개 -->
+      <div class="field">
+        <label>핵심 기능 (최대 3개)</label>
+        <!-- ✏️ 기능 입력란을 추가하려면 아래 input을 복사하고 id를 feature4로 바꾸세요 -->
+        <div class="feature-group">
+          <input type="text" id="feature1" placeholder="기능 1: 예) 센서 데이터 실시간 시각화" />
+          <input type="text" id="feature2" placeholder="기능 2: 예) 이상 감지 알림" />
+          <input type="text" id="feature3" placeholder="기능 3: 예) 주간 리포트 자동 생성" />
+        </div>
+      </div>
+
+      <!-- AWS 서비스 — 태그 방식 -->
+      <div class="field">
+        <label for="awsService">사용할 AWS 서비스</label>
+
+        <!-- 추가된 태그 목록 -->
+        <div class="aws-tag-container" id="awsTagContainer">
+          <span class="aws-tag-placeholder" id="awsTagPlaceholder">아래에서 서비스를 선택하거나 직접 입력하세요</span>
+        </div>
+
+        <!-- ✏️ AWS 서비스 목록을 추가/수정하려면 아래 <option> 태그를 편집하세요 -->
+        <select id="awsService">
+          <option value="">— 서비스 선택 —</option>
+          <option>Amazon S3</option>
+          <option>AWS Lambda</option>
+          <option>Amazon DynamoDB</option>
+          <option>Amazon RDS</option>
+          <option>Amazon EC2</option>
+          <option>Amazon API Gateway</option>
+          <option>Amazon Cognito</option>
+          <option>Amazon SES</option>
+          <option>Amazon SNS</option>
+          <option>Amazon CloudWatch</option>
+          <option>AWS Amplify</option>
+          <option>Amazon Bedrock</option>
+        </select>
+
+        <!-- 직접 입력: Enter 또는 추가 버튼으로 태그 추가 -->
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <input type="text" id="awsServiceCustom"
+                 placeholder="직접 입력 후 Enter 또는 추가 버튼"
+                 style="flex:1;" />
+          <button type="button" onclick="AWS태그직접추가()"
+                  style="flex:none; padding:0 14px; background:#edf2f7; color:#4a5568;
+                         border:1.5px solid #cbd5e0; border-radius:8px; font-size:0.85rem;
+                         font-weight:600; cursor:pointer;">추가</button>
+        </div>
+      </div>
+
+      <!-- 저장 / 초기화 버튼 -->
+      <div class="button-row">
+        <button class="btn-save" onclick="저장하기()">💾 저장</button>
+        <button class="btn-reset" onclick="초기화확인모달열기()">🗑️ 초기화</button>
+      </div>
+
+      <div class="toast" id="toast">✅ Local Storage에 저장되었습니다!</div>
+    </section>
+
+    <!-- ════════════════ 카드 미리보기 ════════════════ -->
+    <section class="preview-section">
+      <h2>🃏 카드 미리보기</h2>
+      <div id="cardArea">
+        <div class="card-empty">
+          <span class="empty-icon">💡</span>
+          왼쪽에 아이디어를 입력하면<br />여기에 발표용 카드가 표시됩니다.
+        </div>
+      </div>
+    </section>
+
+  </div><!-- /.layout -->
+
+
+  <!-- ════════════════ 초기화 확인 모달 ════════════════ -->
+  <!-- 브라우저 기본 confirm() 대신 커스텀 모달을 사용해 실수를 방지합니다 -->
+  <div class="modal-overlay" id="resetModal">
+    <div class="modal-box">
+      <div class="modal-icon">⚠️</div>
+      <div class="modal-title">정말 초기화할까요?</div>
+      <div class="modal-desc">
+        입력한 내용과 Local Storage에 저장된<br />
+        데이터가 <strong>모두 삭제</strong>됩니다.<br />
+        이 작업은 되돌릴 수 없습니다.
+      </div>
+      <div class="modal-buttons">
+        <button class="modal-btn-cancel" onclick="초기화확인모달닫기()">취소</button>
+        <button class="modal-btn-confirm" onclick="초기화실행()">초기화</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ====================================================
+       ⚙️ 자바스크립트 영역 — 동작 로직을 여기서 수정하세요
+       ==================================================== -->
+  <script>
+    // ── 입력 필드 ID 목록 (텍스트/textarea/select 필드만 포함) ──
+    // ✏️ 필드를 추가/삭제할 때 이 배열도 함께 수정하세요
+    const 입력필드목록 = [
+      'projectName',
+      'problem',
+      'targetUser',
+      'feature1',
+      'feature2',
+      'feature3'
+    ];
+
+    // Local Storage 저장 키
+    // ✏️ 프로젝트를 분리 저장하려면 이 값을 바꾸세요
+    const 저장키 = 'hackathon-idea-card';
+
+    // 현재 선택된 AWS 서비스 목록 (배열)
+    // 중복 방지를 위해 Set이 아닌 배열을 사용해 순서를 유지합니다
+    var AWS서비스목록 = [];
+
+    // ──────────────────────────────────────────────
+    // 페이지 로드: 저장 데이터 복원 → 이벤트 등록 → 카드 렌더링
+    // ──────────────────────────────────────────────
+    window.addEventListener('load', function () {
+      데이터불러오기();
+      이벤트등록();
+      카드업데이트();
+    });
+
+    function 이벤트등록() {
+      // 일반 텍스트 필드: 입력할 때마다 카드 업데이트
+      입력필드목록.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('input', 카드업데이트);
+        }
+      });
+
+      // AWS 드롭다운: 선택 시 태그 추가
+      document.getElementById('awsService').addEventListener('change', function () {
+        var 선택값 = this.value;
+        if (선택값) {
+          AWS태그추가(선택값);
+          this.value = ''; // 선택 후 드롭다운 초기화
+        }
+      });
+
+      // AWS 직접 입력: Enter 키로 태그 추가
+      document.getElementById('awsServiceCustom').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          AWS태그직접추가();
+        }
+      });
+    }
+
+    // ──────────────────────────────────────────────
+    // AWS 태그 추가 (드롭다운 선택 또는 직접 입력)
+    // ──────────────────────────────────────────────
+    function AWS태그추가(서비스명) {
+      var 정리된이름 = 서비스명.trim();
+      if (!정리된이름) return;
+
+      // 중복 체크
+      if (AWS서비스목록.indexOf(정리된이름) !== -1) return;
+
+      AWS서비스목록.push(정리된이름);
+      AWS태그렌더링();
+      카드업데이트();
+    }
+
+    function AWS태그직접추가() {
+      var input = document.getElementById('awsServiceCustom');
+      AWS태그추가(input.value);
+      input.value = '';
+    }
+
+    // ──────────────────────────────────────────────
+    // AWS 태그 삭제 (× 버튼 클릭 시)
+    // ──────────────────────────────────────────────
+    function AWS태그삭제(인덱스) {
+      AWS서비스목록.splice(인덱스, 1);
+      AWS태그렌더링();
+      카드업데이트();
+    }
+
+    // ──────────────────────────────────────────────
+    // AWS 태그 컨테이너를 현재 목록 기준으로 다시 그리기
+    // ──────────────────────────────────────────────
+    function AWS태그렌더링() {
+      var container = document.getElementById('awsTagContainer');
+      var placeholder = document.getElementById('awsTagPlaceholder');
+
+      // 기존 태그(span.aws-tag) 모두 제거
+      var 기존태그들 = container.querySelectorAll('.aws-tag');
+      기존태그들.forEach(function (el) { el.remove(); });
+
+      if (AWS서비스목록.length === 0) {
+        placeholder.style.display = 'inline';
+        return;
+      }
+
+      placeholder.style.display = 'none';
+
+      // 태그를 순서대로 컨테이너에 삽입
+      AWS서비스목록.forEach(function (이름, 인덱스) {
+        var tag = document.createElement('span');
+        tag.className = 'aws-tag';
+        tag.innerHTML =
+          '☁️ ' + 텍스트이스케이프(이름) +
+          '<button class="aws-tag-remove" onclick="AWS태그삭제(' + 인덱스 + ')" ' +
+          'title="' + 텍스트이스케이프(이름) + ' 제거">×</button>';
+        container.appendChild(tag);
+      });
+    }
+
+    // ──────────────────────────────────────────────
+    // 카드 미리보기 업데이트 (입력값이 바뀔 때마다 호출)
+    // ──────────────────────────────────────────────
+    function 카드업데이트() {
+      var 데이터 = 입력값읽기();
+      var cardArea = document.getElementById('cardArea');
+
+      // 아무것도 입력되지 않았으면 안내 문구
+      if (!데이터.projectName && !데이터.problem && !데이터.targetUser) {
+        cardArea.innerHTML =
+          '<div class="card-empty">' +
+            '<span class="empty-icon">💡</span>' +
+            '왼쪽에 아이디어를 입력하면<br />여기에 발표용 카드가 표시됩니다.' +
+          '</div>';
+        return;
+      }
+
+      // 핵심 기능 항목 HTML
+      var 기능항목HTML = '';
+      var 기능번호 = 1;
+      [데이터.feature1, 데이터.feature2, 데이터.feature3].forEach(function (기능) {
+        if (기능 && 기능.trim()) {
+          기능항목HTML +=
+            '<div class="feature-item">' +
+              '<span class="feature-num">' + 기능번호 + '</span>' +
+              '<span class="feature-text">' + 텍스트이스케이프(기능) + '</span>' +
+            '</div>';
+          기능번호++;
+        }
+      });
+      if (!기능항목HTML) {
+        기능항목HTML = '<span style="color:#a0aec0;font-size:0.85rem;">—</span>';
+      }
+
+      // AWS 서비스 태그 HTML (카드 안)
+      var AWS태그HTML = '';
+      AWS서비스목록.forEach(function (이름) {
+        AWS태그HTML +=
+          '<span class="card-aws-tag">☁️ ' + 텍스트이스케이프(이름) + '</span>';
+      });
+      if (!AWS태그HTML) {
+        AWS태그HTML = '<span style="color:#a0aec0;font-size:0.85rem;">—</span>';
+      }
+
+      // 카드 HTML 조립
+      cardArea.innerHTML =
+        '<div class="card">' +
+
+          // 헤더 (그라디언트 배경)
+          '<div class="card-header">' +
+            '<div class="card-badge">HACKATHON IDEA</div>' +
+            '<div class="card-title">' +
+              텍스트이스케이프(데이터.projectName || '프로젝트명 없음') +
+            '</div>' +
+          '</div>' +
+
+          // 본문
+          '<div class="card-body">' +
+
+            '<div class="card-section">' +
+              '<div class="card-section-label">🔍 해결하는 문제</div>' +
+              '<div class="card-section-value">' +
+                텍스트이스케이프(데이터.problem || '—') +
+              '</div>' +
+            '</div>' +
+
+            '<div class="card-section">' +
+              '<div class="card-section-label">👥 주요 사용자</div>' +
+              '<div class="card-section-value">' +
+                텍스트이스케이프(데이터.targetUser || '—') +
+              '</div>' +
+            '</div>' +
+
+            '<div class="card-divider"></div>' +
+
+            '<div class="card-section">' +
+              '<div class="card-section-label">⚡ 핵심 기능</div>' +
+              '<div class="feature-list">' + 기능항목HTML + '</div>' +
+            '</div>' +
+
+            '<div class="card-section">' +
+              '<div class="card-section-label">☁️ AWS 서비스</div>' +
+              '<div class="card-aws-list">' + AWS태그HTML + '</div>' +
+            '</div>' +
+
+          '</div>' + // /.card-body
+        '</div>';    // /.card
+    }
+
+    // ──────────────────────────────────────────────
+    // 현재 폼의 모든 텍스트 입력값을 객체로 반환
+    // ──────────────────────────────────────────────
+    function 입력값읽기() {
+      var 결과 = {};
+      입력필드목록.forEach(function (id) {
+        var el = document.getElementById(id);
+        결과[id] = el ? el.value : '';
+      });
+      return 결과;
+    }
+
+    // ──────────────────────────────────────────────
+    // 저장: 텍스트 입력값 + AWS 서비스 배열을 Local Storage에 저장
+    // ──────────────────────────────────────────────
+    function 저장하기() {
+      var 저장데이터 = 입력값읽기();
+      저장데이터.aws목록 = AWS서비스목록; // AWS 태그 배열도 함께 저장
+      localStorage.setItem(저장키, JSON.stringify(저장데이터));
+      토스트보이기();
+    }
+
+    // ──────────────────────────────────────────────
+    // 초기화 모달 열기 / 닫기
+    // ──────────────────────────────────────────────
+    function 초기화확인모달열기() {
+      document.getElementById('resetModal').classList.add('show');
+    }
+
+    function 초기화확인모달닫기() {
+      document.getElementById('resetModal').classList.remove('show');
+    }
+
+    // 모달 바깥 영역 클릭 시 닫기
+    document.getElementById('resetModal').addEventListener('click', function (e) {
+      if (e.target === this) 초기화확인모달닫기();
+    });
+
+    // ──────────────────────────────────────────────
+    // 초기화 실행 (모달에서 '초기화' 버튼 클릭 시)
+    // ──────────────────────────────────────────────
+    function 초기화실행() {
+      // 텍스트 필드 비우기
+      입력필드목록.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+
+      // AWS 직접 입력란 비우기
+      document.getElementById('awsServiceCustom').value = '';
+
+      // AWS 태그 목록 초기화
+      AWS서비스목록 = [];
+      AWS태그렌더링();
+
+      // Local Storage 삭제
+      localStorage.removeItem(저장키);
+
+      카드업데이트();
+      초기화확인모달닫기();
+    }
+
+    // ──────────────────────────────────────────────
+    // 페이지 로드 시 Local Storage에서 데이터 복원
+    // ──────────────────────────────────────────────
+    function 데이터불러오기() {
+      var 저장된값 = localStorage.getItem(저장키);
+      if (!저장된값) return;
+
+      var 데이터 = JSON.parse(저장된값);
+
+      // 텍스트 필드 복원
+      입력필드목록.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && 데이터[id] !== undefined) {
+          el.value = 데이터[id];
+        }
+      });
+
+      // AWS 서비스 목록 복원
+      if (Array.isArray(데이터.aws목록)) {
+        AWS서비스목록 = 데이터.aws목록;
+        AWS태그렌더링();
+      }
+    }
+
+    // ──────────────────────────────────────────────
+    // 저장 완료 토스트 메시지를 2초 동안 표시
+    // ✏️ 표시 시간을 바꾸려면 setTimeout 두 번째 인자(ms)를 수정하세요
+    // ──────────────────────────────────────────────
+    function 토스트보이기() {
+      var toast = document.getElementById('toast');
+      toast.style.display = 'block';
+      setTimeout(function () {
+        toast.style.display = 'none';
+      }, 2000);
+    }
+
+    // ──────────────────────────────────────────────
+    // XSS 방지: 사용자 입력을 HTML에 안전하게 삽입
+    // (이 함수는 수정하지 않아도 됩니다)
+    // ──────────────────────────────────────────────
+    function 텍스트이스케이프(문자열) {
+      var div = document.createElement('div');
+      div.appendChild(document.createTextNode(문자열));
+      return div.innerHTML;
+    }
+
+    // ====================================================
+    // ✏️ 수정하기 쉬운 부분 안내
+    // ====================================================
+    //
+    // 1. AWS 서비스 드롭다운 목록 추가/수정
+    //    → <select id="awsService"> 안의 <option> 태그를 편집하세요.
+    //
+    // 2. 카드 헤더 그라디언트 색상 변경
+    //    → CSS의 .card-header { background: linear-gradient(...) } 를 수정하세요.
+    //
+    // 3. 저장 키 이름 변경 (여러 프로젝트 분리 저장)
+    //    → 상단의 const 저장키 = 'hackathon-idea-card'; 를 바꾸세요.
+    //
+    // 4. 핵심 기능 입력란 추가
+    //    → HTML에서 feature4 input을 추가하고,
+    //      상단 입력필드목록 배열에 'feature4'를 추가하세요.
+    //      카드업데이트()의 feature 배열에도 데이터.feature4를 추가하세요.
+    //
+    // 5. 토스트 표시 시간 변경
+    //    → 토스트보이기()의 setTimeout 값(기본 2000ms)을 바꾸세요.
+    //
+    // ====================================================
+  </script>
+
+</body>
+</html>

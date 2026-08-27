@@ -3,7 +3,7 @@
 문서화(캔버스) 기능이 있는 웹 LLM 서비스.
 백엔드 FastAPI(Python) + 프론트엔드 React(Vite/TS) 분리, 로컬 LLM(gpt-oss-120b), PostgreSQL + Redis.
 
-> 목적·유스케이스·수용기준의 단일 진실원천(SSoT)은 `docs/requirements.md`.
+> 목적·유스케이스·수용기준의 단일 진실원천(SSoT)은 `docs/requirements_v1.md`.
 > 진행 과정·결정 이유는 `docs/dev-log.md`(append-only).
 
 ## 이 레포의 경계
@@ -84,4 +84,4 @@ Redis: 세션 · 스트림 버퍼(SSE 재연결) · 단기 캐시.
 
 ## 개발
 
-아직 착수 전 — `docs/requirements.md` 승인 후 빌드 시작.
+아직 착수 전 — `docs/requirements_v1.md` 승인 후 빌드 시작.

@@ -9,7 +9,7 @@
 >
 > | | Track A (대회 제출) | Track B (이 문서) |
 > |---|---|---|
-> | 정본 | `.kiro/specs/complaint-assistant/` | `docs/requirements.md` |
+> | 정본 | `.kiro/specs/complaint-assistant/` | `docs/requirements_v1.md` |
 > | 스택 | Streamlit + Bedrock + FAISS | FastAPI + React + PostgreSQL + Redis + Bedrock |
 > | 배포 | EC2 | 미정 |
 > | 시점 | 지금 | 대회 후 |
