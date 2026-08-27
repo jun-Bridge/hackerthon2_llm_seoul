@@ -511,7 +511,7 @@ POST   /sessions/{sid}/document/redo
 - [ ] 제안 대기 중 `PATCH lines` · `POST messages` · `format` · `undo` · `redo`가 모두 409
 - [ ] 제안 대기 중에도 `GET document` · `export.md` · `accept` · `reject`는 정상
 - [ ] 제안이 TTL로 만료되면 문서가 그대로이고 잠금이 풀린다
-- [ ] 줄 삽입·삭제 후 `order`가 0부터 빈틈없이 매겨진다
+- [ ] 줄 삽입·삭제 후 `line_order`가 0부터 빈틈없이 매겨진다
 - [ ] 없는 `line_id`로 도구가 불리면 오류를 LLM에 돌려주고 서버가 죽지 않는다
 - [ ] 도구 호출이 턴 상한을 넘으면 루프가 강제 종료되고 그때까지의 제안이 제출된다
 - [ ] 턴이 예외로 끝나도, 잠금이 TTL을 넘겨도 잠금이 해제된다
