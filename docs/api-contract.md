@@ -9,9 +9,8 @@ _2026-08-27 · 상태: 합의 대기_
 기능 정의의 출처는 `.kiro/specs/complaint-assistant/`(정본)이고, 이 문서는 그것을
 HTTP 경계로 옮긴 것이다. 기능 자체가 궁금하면 그쪽을 본다.
 
-화면 감각은 `docs/anonymous_complain_assistant.html`(시안)을 참고하되,
-**시안은 정본보다 앞선 버전이라 상태값·기능이 다르다.** 어긋나는 지점은 8장에 정리했다.
-시안을 그대로 옮기면 안 된다.
+화면 감각은 `docs/`의 시안 두 개를 참고하되, **둘 다 정본보다 앞선 버전이라
+상태값·기능이 다르다.** 어긋나는 지점은 8장에 정리했다. 시안을 그대로 옮기면 안 된다.
 
 ---
 
@@ -205,10 +204,11 @@ interface ConversationTurn {
 > 워커가 여럿이라는 사실이 이 계약의 여러 곳을 정한다 — 세션이 Redis에 있어야 하는 이유,
 > 전이 검증이 `UPDATE ... WHERE`인 이유, 목록·통계를 캐시하지 않는 이유가 전부 여기서 나온다.
 
-23개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
+24개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
 | # | 프론트 함수 | HTTP | 백엔드 함수 | 무엇을 하나 | 건드리는 테이블 |
 |---|---|---|---|---|---|
+| 0 | `listSchools` | `GET /schools` | `list_schools` | 지원 학교 목록 (가입 화면) | `schools` R |
 | 1 | `lookupSchool` | `POST /auth/school-lookup` | `lookup_school` | 이메일 도메인으로 학교 확인 | `schools` R |
 | 2 | `signup` | `POST /auth/signup` | `signup` | 가입 + 자동 로그인 | `schools` R · `admin_codes` R · `users` W |
 | 3 | `login` | `POST /auth/login` | `login` | 로그인 | `users` R |
@@ -241,6 +241,42 @@ interface ConversationTurn {
 ## 2. 함수별 상세
 
 ### 2.1 인증 — `api/auth.js` ↔ `routes/auth.py`
+
+---
+
+#### 0. `listSchools` — 지원 학교 목록
+
+```js
+/** 가입 화면에서 지원 학교를 보여준다. 인증 불필요. */
+export async function listSchools() { ... }   // → School[]
+```
+```python
+@router.get("/schools")
+def list_schools() -> list[SchoolOut]:
+    return db.list_schools()      # id는 내보내지 않는다 — 가입에 school_id를 쓰지 않으므로
+```
+
+```ts
+interface School {
+  name: string;          // '조선대학교'
+  email_domain: string;  // 'chosun.ac.kr'
+  aliases: string[];     // ['조선대', '조대'] — 검색용
+}
+```
+
+**왜 필요한가**: 지금 계약에는 `lookupSchool(email)`뿐이라, 사용자가 **이메일을 다 치고 나서야**
+자기 학교가 지원되는지 안다. 미지원이면 그때 막히고 이유도 모른다.
+가입 화면에 지원 학교를 먼저 보여주면 그 좌절이 없어진다.
+
+**`aliases`가 있는 이유**: 한국 학교 이름은 줄여 부르는 쪽이 자연스럽다.
+"조대"·"전북대"·"지스트"로 찾을 수 있어야 목록이 쓸모가 있다.
+`schools` 테이블에 별칭 컬럼이 필요하다 — **정본 스키마에 없다.**
+
+```sql
+ALTER TABLE schools ADD COLUMN aliases TEXT[];   -- PostgreSQL 배열
+```
+
+**인증이 필요 없다.** 가입 전에 부르기 때문이다. 학교 목록은 공개 정보다.
 
 ---
 
@@ -946,7 +982,7 @@ logout()  →  서버가 Redis 세션 삭제 + 쿠키 만료
 ```
 src/api/
 ├─ client.js      fetch 래퍼 — credentials·헤더·오류 정규화. 여기만 fetch를 안다
-├─ auth.js        7개
+├─ auth.js        8개
 ├─ draft.js       4개
 ├─ board.js       4개
 └─ admin.js       8개
@@ -1074,6 +1110,43 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 ---
 
 ## 8. UI 시안과의 차이
+
+시안이 둘 있다. **둘 다 정본보다 앞선 버전이라 상태 모델이 다르다.**
+
+| 파일 | 성격 |
+|---|---|
+| `anonymous_complain_assistant.html` | 초기 시안. 관리자 표 중심 |
+| `anonymous_complain_assistant_full_schools.html` | 최신 시안. 학교 선택·챗 중심·드로어 피드 |
+
+**두 시안 모두 상태가 `접수/수락/보류/거절` 넷뿐이다.** 정본은 일곱이다(8.1 참조).
+최신 시안에도 **철회·코멘트·해결완료·처리중·미확인이 없다.** 그대로 옮기면 정본을 못 채운다.
+
+또 최신 시안의 `parseNaturalInput()`·`guessCategory()`는 **브라우저에서 문자열을 뜯어
+카테고리를 추측한다.** 실제로는 Bedrock이 도구 호출로 정한다 — 카테고리는 서버가 주는 값이지
+프론트가 만드는 값이 아니다.
+
+### 8.0 최신 시안이 제기하는 것 — 가입 방식
+
+최신 시안은 **학교를 먼저 고르고**(검색 + 별칭) 도메인이 자동으로 붙은 뒤
+**이메일 아이디만** 입력한다. 정본은 반대로 **이메일 전체를 입력하면 도메인으로 학교가 정해진다**
+(학교 선택 UI 없음).
+
+| | 정본 방식 | 최신 시안 방식 |
+|---|---|---|
+| 입력 | `student1@chosun.ac.kr` | 학교 고르기 → `student1` + `@chosun.ac.kr`(고정) |
+| 칸 수 | 1 | 2 |
+| 도메인 오타 | 가능 (미등록이면 막힘) | 불가능 (고를 수만 있다) |
+| 지원 학교 확인 | 다 치고 나서 | 처음부터 목록으로 |
+| 다른 학교로 잘못 등록 | 불가능 (도메인이 증명) | 불가능 (도메인이 잠긴다) |
+
+**정본이 학교 드롭다운을 배제한 근거**("목록에서 실수로 다른 학교를 고르면 민원이 잘못된
+게시판에 올라간다")는 최신 시안에는 해당하지 않는다. 학교를 고르면 **도메인이 잠기므로**
+다른 학교 이메일을 넣을 수 없기 때문이다.
+
+**어느 쪽이든 `listSchools`(#0)는 필요하다.** 정본 방식에서도 "우리 학교가 지원되나"를
+가입 전에 보여줘야 한다. 다만 최신 시안 방식을 택하면 **정본의 US-1.1·1.3 서술을 고쳐야 한다.**
+
+
 
 `docs/anonymous_complain_assistant.html`은 화면 구성과 톤을 잡는 데 쓴다.
 다만 **정본(`.kiro`)보다 앞선 버전이라 그대로 옮기면 어긋난다.** 바뀐 곳은 아래와 같다.
