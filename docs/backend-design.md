@@ -476,6 +476,11 @@ def acquire_compact(sid) -> bool:
 | 압축이 돌 때마다 | 새로 뽑은 제목으로 갱신 |
 | 사용자가 직접 바꾸면 | `is_manual_title = TRUE` → **이후 자동 갱신이 덮어쓰지 않는다** |
 
+**압축이 제목을 바꿔도 프론트는 즉시 알지 못한다.** 압축은 응답을 보낸 뒤 도는
+백그라운드 작업이라 그 턴의 응답에 실을 수 없다. **다음 턴 응답이나 다음 `listSessions`에서
+따라잡는다** — 사이드바 제목이 한 턴 늦게 바뀌는 것은 감수한다.
+서버가 밀어줄 수단이 없고, 그 하나 때문에 폴링을 붙일 값어치가 없다.
+
 사람이 정한 이름을 기계가 뒤엎으면 안 된다.
 
 ### 7.6 세션 하나 열기
@@ -657,7 +662,9 @@ POST /chat-sessions/{sid}/messages   { message | choice }
        ├ conversation_repo.add(conn, sid, 'assistant', "[정리 완료] …", refined_json=결과)
        ├ chat_session_repo.update_meta(conn, sid, title=…, category=…)
        ├ state.set(sid, step='confirm')
-       └ return { is_complete:true, preview }
+       └ return { is_complete:true, preview, title, category }
+            title·category는 **바뀐 경우에만** 싣는다 — 프론트가 사이드바의
+            그 줄만 갈아끼우면 되고, 목록을 통째로 다시 받지 않는다
   │
   ├ session.release_turn(sid)      finally — 실패로 끝나도 반드시
   │

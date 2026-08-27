@@ -480,7 +480,7 @@ interface SessionSummary {
   title: string | null;        // null이면 화면에 "새 대화"
   category: Category | null;   // 확정되면 채워진다. 아이콘 표시용
   submitted: boolean;          // true면 접수 완료 — 읽기 전용
-  withdrawn: boolean;          // 접수 후 철회함. 읽기 전용은 그대로
+  withdrawn: boolean;          // 접수했다가 철회함. 서버가 연결된 민원 상태로 계산
   updated_at: string;
 }
 ```
@@ -511,12 +511,27 @@ export async function getSession(sessionId) { ... }   // → SessionDetail
 interface SessionDetail extends SessionSummary {
   step: 'category' | 'location' | 'detail' | 'confirm' | null;
   choices: string[] | null;    // 지금 보여줄 칩. 없으면 자유 입력만
-  preview: Preview | null;     // step='confirm'이면 확정안
+  preview: Preview | null;     // 마지막 확정안. 한 번이라도 확정됐으면 남아 있다
 }
 ```
 
 **세션을 열 때 이것과 `getSessionConversation`을 함께 받는다.**
 대화는 말풍선으로, `step`·`choices`는 입력창 위 칩으로 그린다.
+
+**`preview`와 `step`은 따로 논다.**
+
+| 상황 | `step` | `preview` | 화면 |
+|---|---|---|---|
+| 아직 확정 전 | `category`/`location`/`detail` | `null` | 칩만 |
+| 방금 확정됨 | `confirm` | 확정안 | 미리보기 + 접수 버튼 |
+| 확정 후 더 고치는 중 | `location` 등 | **직전 확정안이 남아 있다** | 칩 + 이전 미리보기 |
+
+**확정 후에도 대화를 이어갈 수 있기 때문이다.** "위치를 4층으로 바꿔줘"라고 하면
+모델이 다시 되물을 수 있고, 그때 이전 미리보기를 지워버리면 사용자가 무엇을 고치는 중인지 잃는다.
+
+**접수는 `step === 'confirm'`일 때만 허용한다.** `preview`가 있어도 되묻는 중이면
+확정이 흔들리는 상태이므로 버튼을 감춘다. 서버도 마지막 확정안을 쓰지만,
+화면이 "고치는 중"인데 접수되면 사용자가 놀란다.
 
 ---
 
@@ -553,10 +568,17 @@ def send_message(sid: int, body: SendMessageIn,
 // 확정안이 나온 경우
 { "is_complete": true,
   "step": "confirm",
+  "title": "본관 3층 화장실 배수 불량",     // 세션 제목이 바뀌었으면 함께 온다
+  "category": "위생 / 배관",                // 사이드바 아이콘용
   "preview": { "category": "위생 / 배관", "location": "본관 3층 남자화장실",
                "refined_title": "본관 3층 화장실 배수 불량 조치 요청",
                "refined_body": "현상: ...\n영향: ...\n요청: ..." } }
 ```
+
+**`title`·`category`가 응답에 실리는 이유** — 확정 턴에서 세션 제목이 붙는다.
+이게 없으면 프론트는 사이드바에 "새 대화"가 그대로 남은 것을 보고도 바뀐 줄 모른다.
+**바뀌지 않은 턴에서는 두 필드가 없다.** 있으면 사이드바의 그 줄만 갈아끼운다 —
+`listSessions`를 통째로 다시 받지 않는다.
 
 **`choices`는 칩으로 그린다.** 누르면 그 문구를 그대로 `sendMessage`로 보낸다 —
 **선택 전용 API가 없다.** 마지막 항목은 항상 "직접 입력"이라 자유 입력으로 빠질 수 있다.
@@ -949,7 +971,7 @@ interface BedrockLog {
 |---|---|
 | 로그인 · 앱 진입 | `getMe` → 역할에 맞는 첫 화면 데이터 |
 | 새 대화 시작 (#8) | `listSessions` (목록 맨 위에 뜬다) |
-| 메시지 전송 (#9) | 없음 — 응답으로 갱신. 제목이 바뀌면 `listSessions` |
+| 메시지 전송 (#9) | 없음 — 응답에 `title`·`category`가 실려 오면 사이드바의 그 줄만 갈아끼운다 |
 | 민원 접수 (#11) | `listComplaints` + `listSessions` (그 세션이 읽기 전용이 된다) |
 | 철회 (#15) | `listComplaints` (+ 관리자 화면이면 `getStats`) |
 | 상세 열람 (#17) | 응답이 갱신된 `Complaint`다. **목록의 그 행도 갱신한다** — 미확인→확인으로 바뀌었다. `getStats`도 다시 받는다 |
@@ -1257,6 +1279,26 @@ app/llm/            BedrockClient — 도구 호출로 분류·정제
 시안은 상태가 넷이고 정본은 일곱이다. 특히 **`수락`이 최종이 아니다** —
 `처리중`으로 갈 뿐이고 조치가 끝나면 `해결 완료`를 한 번 더 눌러야 한다.
 배지 색과 필터 탭을 시안에서 가져올 때 이 셋(`미확인`·`확인`·`처리중`)을 새로 만들어야 한다.
+
+### 8.1-1 최신 시안에도 없는 것 — 대화 세션
+
+`anonymous_complain_assistant_full_schools.html`은 **대화 세션 개념이 들어오기 전에** 만든 것이다.
+확정 설계와 이만큼 벌어져 있다.
+
+| 계약 | 시안 |
+|---|---|
+| **사이드바 = 과거 대화 목록** (#8-1) | 사이드바가 **접수 현황(게시판)** 드로어다 |
+| 대화가 여러 개, 골라서 이어 씀 | 대화가 하나. 새로 시작하면 이전 것이 사라진다 |
+| **세션 제목**이 자동으로 붙는다 | 제목 개념이 없다 |
+| 칩을 **서버가 준다**(`choices`) | `detailChips` 상수를 브라우저가 들고 있다 |
+| 단계를 **모델이 정한다** | `chatStep`을 브라우저가 `idle→location→detail→confirm`으로 몬다 |
+| 새로고침하면 서버에서 복원 | 새로고침하면 대화가 사라진다 |
+
+**그대로 옮기면 Epic 2-1이 통째로 빠진다.** 사이드바를 두 개로 나누거나(과거 대화 + 접수 현황),
+탭으로 가르는 판단이 필요하다 — 지금 시안에는 그 자리가 없다.
+
+**칩과 단계는 특히 조심해야 한다.** 시안은 브라우저가 정하고, 실제로는 서버가 준다.
+시안 코드를 베끼면 서버가 준 `choices`를 무시하고 클라이언트 상수를 쓰게 된다.
 
 ### 8.2 시안에 없어서 새로 만들어야 하는 것
 
