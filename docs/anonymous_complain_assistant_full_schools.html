@@ -525,6 +525,15 @@
       border-color: #9CA3AF;
     }
 
+    /* 상태 배지 — 미확인/확인/처리중/해결완료/보류/거절 */
+    .status-pill { padding:3px 10px; border-radius:999px; font-size:0.72rem; font-weight:600; white-space:nowrap; }
+    .status-미확인   { background:#FEF3C7; color:#92400E; }
+    .status-확인     { background:#DBEAFE; color:#1E40AF; }
+    .status-처리중   { background:#E0E7FF; color:#3730A3; }
+    .status-해결완료 { background:#DCFCE7; color:#15803D; }
+    .status-보류     { background:#F3F4F6; color:#4B5563; }
+    .status-거절     { background:#FEE2E2; color:#B91C1C; }
+
     .badge-count {
       background: #111827;
       color: #FFFFFF;
@@ -1220,15 +1229,6 @@
         <p class="auth-desc" id="authCardDesc">학교 웹메일 계정으로 소속 캠퍼스에 접속하세요.</p>
       </div>
 
-      <!-- Role Selector (학생 vs 관리자) -->
-      <div class="auth-role-tabs">
-        <button type="button" class="auth-role-btn active" id="role-student" onclick="selectAuthRole('student')">
-          <i class="bi bi-person"></i> 학생 / 민원인
-        </button>
-        <button type="button" class="auth-role-btn" id="role-admin" onclick="selectAuthRole('admin')">
-          <i class="bi bi-building-gear"></i> 시설관리자
-        </button>
-      </div>
 
       <!-- Auth Form -->
       <form id="authForm" onsubmit="handleAuthSubmit(event)" style="display:flex; flex-direction:column; gap:0.9rem;">
@@ -1259,6 +1259,28 @@
           <label>비밀번호</label>
           <div class="auth-input-wrap">
             <input type="password" id="authPassword" placeholder="••••••••" required />
+          </div>
+        </div>
+
+        <!-- 교직원 여부 토글 (회원가입에서만 보인다) -->
+        <div class="auth-input-group" id="staffToggleGroup" style="display:none;">
+          <label style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+            <span style="display:flex; align-items:center; gap:8px;">
+              <i class="bi bi-building-gear"></i> 교직원이신가요?
+            </span>
+            <input type="checkbox" id="authIsStaff" onchange="toggleStaffCode(this.checked)"
+                   style="width:38px; height:20px; cursor:pointer;" />
+          </label>
+          <p style="margin:6px 0 0; font-size:0.75rem; color:#9CA3AF;">
+            체크하면 학교에서 배정받은 코드를 입력해야 합니다.
+          </p>
+        </div>
+
+        <!-- 학교 코드 (토글 시 펼쳐짐) -->
+        <div class="auth-input-group" id="staffCodeGroup" style="display:none;">
+          <label>학교 관리자 코드</label>
+          <div class="auth-input-wrap">
+            <input type="text" id="authAdminCode" placeholder="예: CSU-ADM-01" autocomplete="off" />
           </div>
         </div>
 
@@ -1529,8 +1551,10 @@
             <div class="admin-table-toolbar">
               <div class="filter-pills-bar">
                 <button class="filter-btn-pill active" onclick="filterAdminTable('all', this)">전체보기</button>
-                <button class="filter-btn-pill" onclick="filterAdminTable('접수', this)">검토 대기</button>
-                <button class="filter-btn-pill" onclick="filterAdminTable('수락', this)">수락</button>
+                <button class="filter-btn-pill" onclick="filterAdminTable('미확인', this)">미확인</button>
+                <button class="filter-btn-pill" onclick="filterAdminTable('확인', this)">확인</button>
+                <button class="filter-btn-pill" onclick="filterAdminTable('처리중', this)">처리중</button>
+                <button class="filter-btn-pill" onclick="filterAdminTable('해결완료', this)">해결완료</button>
                 <button class="filter-btn-pill" onclick="filterAdminTable('보류', this)">보류</button>
                 <button class="filter-btn-pill" onclick="filterAdminTable('거절', this)">거절</button>
               </div>
@@ -1566,6 +1590,86 @@
   </div><!-- /app-content -->
   </div><!-- /content-flex-wrap -->
 
+  <!-- LOADING SCREEN — getMe() 응답을 기다리는 동안. role을 알기 전엔 화면을 못 그린다 -->
+  <div id="bootLoader" style="
+      position:fixed; inset:0; z-index:9999; display:flex;
+      flex-direction:column; align-items:center; justify-content:center; gap:16px;
+      background:#FFFFFF;">
+    <div style="display:flex; align-items:center; gap:10px; font-size:1.3rem; font-weight:700; color:#111827;">
+      <i class="bi bi-shield-check" style="color:#2563EB;"></i> UniVoice
+    </div>
+    <div style="width:32px; height:32px; border:3px solid #E5E7EB; border-top-color:#2563EB;
+                border-radius:50%; animation:bootspin 0.7s linear infinite;"></div>
+    <p style="font-size:0.82rem; color:#9CA3AF; margin:0;">불러오는 중…</p>
+  </div>
+  <style>@keyframes bootspin { to { transform: rotate(360deg); } }</style>
+
+  <!-- HOLD REASON MODAL — 사유가 없으면 보류가 성립하지 않는다 -->
+  <div class="admin-modal-overlay" id="holdModal">
+    <div class="admin-modal-card" style="max-width:440px;">
+      <div class="admin-modal-head">
+        <h3>보류 사유</h3>
+        <button class="admin-modal-close" onclick="closeHoldModal()"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="admin-modal-body">
+        <p style="font-size:0.8rem; color:#6B7280; margin:0 0 10px;">
+          왜 보류하는지 적어주세요. <b>학생 게시판에도 표시됩니다.</b>
+        </p>
+        <textarea id="holdReasonInput" rows="4" oninput="onHoldReasonInput(this.value)"
+          placeholder="예: 예산 배정 대기 중입니다. 다음 분기에 재검토 예정."
+          style="width:100%; padding:10px; border:1px solid #E5E7EB; border-radius:8px;
+                 font-size:0.84rem; resize:vertical; font-family:inherit;"></textarea>
+        <div class="admin-modal-actions" style="margin-top:12px;">
+          <button class="btn-action-small" onclick="closeHoldModal()">취소</button>
+          <button class="btn-action-small" id="holdSubmitBtn" disabled
+                  style="color:#4B5563; background:#F3F4F6;" onclick="submitHold()">보류 처리</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMMENT MODAL — 상태와 무관하게 언제든 -->
+  <div class="admin-modal-overlay" id="commentModal">
+    <div class="admin-modal-card" style="max-width:440px;">
+      <div class="admin-modal-head">
+        <h3>코멘트 추가</h3>
+        <button class="admin-modal-close" onclick="closeCommentModal()"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="admin-modal-body">
+        <textarea id="commentInput" rows="4"
+          placeholder="예: 시설관리팀에 전달했습니다."
+          style="width:100%; padding:10px; border:1px solid #E5E7EB; border-radius:8px;
+                 font-size:0.84rem; resize:vertical; font-family:inherit;"></textarea>
+        <div class="admin-modal-actions" style="margin-top:12px;">
+          <button class="btn-action-small" onclick="closeCommentModal()">취소</button>
+          <button class="btn-action-small" style="color:#1E40AF; background:#DBEAFE;" onclick="submitComment()">추가</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WITHDRAW MODAL — 본인 확인 -->
+  <div class="admin-modal-overlay" id="withdrawModal">
+    <div class="admin-modal-card" style="max-width:400px;">
+      <div class="admin-modal-head">
+        <h3>민원 철회</h3>
+        <button class="admin-modal-close" onclick="closeWithdrawModal()"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="admin-modal-body">
+        <p style="font-size:0.82rem; color:#6B7280; margin:0 0 10px;">
+          철회하면 게시판과 관리자 목록 양쪽에서 <b>즉시 사라집니다.</b><br>
+          본인 확인을 위해 비밀번호를 입력해주세요.
+        </p>
+        <input type="password" id="withdrawPassword" placeholder="••••••••"
+               style="width:100%; padding:10px; border:1px solid #E5E7EB; border-radius:8px; font-size:0.9rem;" />
+        <div class="admin-modal-actions" style="margin-top:12px;">
+          <button class="btn-action-small" onclick="closeWithdrawModal()">취소</button>
+          <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2;" onclick="submitWithdraw()">철회하기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ADMIN DETAIL MODAL -->
   <div class="admin-modal-overlay" id="adminModal">
     <div class="admin-modal-card">
@@ -1587,10 +1691,27 @@
           <div id="adminModalRefinedTitle" style="font-weight:700; font-size:0.92rem; color:#111827; margin-bottom:6px;">-</div>
           <div id="adminModalRefinedBody" style="font-size:0.84rem; color:#4B5563; line-height:1.5;">-</div>
         </div>
+        <div class="admin-modal-block" style="background:#FAFAFA; border:1px solid #F3F4F6;">
+          <div class="admin-modal-label" style="color:#374151;">
+            <i class="bi bi-chat-left-text"></i> 관리자 코멘트
+          </div>
+          <div id="modalCommentList"></div>
+        </div>
         <div class="admin-modal-actions">
-          <button class="btn-action-small" style="color:#15803D; background:#DCFCE7; border-color:#86EFAC;" onclick="modalChangeStatus('수락')">수락 (처리)</button>
-          <button class="btn-action-small" style="color:#4B5563;" onclick="modalChangeStatus('보류')">보류</button>
-          <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2; border-color:#FCA5A5;" onclick="modalChangeStatus('거절')">거절</button>
+          <!-- '확인' 상태에서만 보인다 -->
+          <span id="modalDecisionGroup" style="display:none; gap:8px;">
+            <button class="btn-action-small" style="color:#15803D; background:#DCFCE7; border-color:#86EFAC;" onclick="modalChangeStatus('처리중')">수락 → 처리중</button>
+            <button class="btn-action-small" style="color:#4B5563;" onclick="openHoldModal()">보류</button>
+            <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2; border-color:#FCA5A5;" onclick="modalChangeStatus('거절')">거절</button>
+          </span>
+          <!-- '처리중' 상태에서만 보인다 -->
+          <span id="modalResolveGroup" style="display:none;">
+            <button class="btn-action-small" style="color:#15803D; background:#DCFCE7; border-color:#86EFAC;" onclick="modalChangeStatus('해결완료')">해결 완료</button>
+          </span>
+          <!-- 코멘트는 상태와 무관하게 언제든 -->
+          <button class="btn-action-small" style="color:#1E40AF;" onclick="openCommentModal()">
+            <i class="bi bi-chat-left-text"></i> 코멘트
+          </button>
         </div>
       </div>
     </div>
@@ -1884,10 +2005,26 @@
     }
 
     // Auth Role Selection
-    function selectAuthRole(role) {
+    // 진입: 로딩 → (실제로는 getMe()) → 로그인 화면
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const el = document.getElementById('bootLoader');
+        if (el) { el.style.transition = 'opacity .25s'; el.style.opacity = '0';
+                  setTimeout(() => el.remove(), 250); }
+      }, 700);
+    });
+
+    function toggleStaffCode(checked) {
+      authRole = checked ? 'admin' : 'student';
+      document.getElementById('staffCodeGroup').style.display = checked ? 'flex' : 'none';
+      const codeInput = document.getElementById('authAdminCode');
+      codeInput.required = checked;
+      if (!checked) codeInput.value = '';
+    }
+
+    function _unusedSelectAuthRole(role) {
       authRole = role;
-      document.getElementById('role-student').classList.remove('active');
-      document.getElementById('role-admin').classList.remove('active');
+      return;
 
       if (role === 'student') {
         document.getElementById('role-student').classList.add('active');
@@ -1903,6 +2040,14 @@
       const btnTextEl = document.getElementById('authBtnText');
       const questionEl = document.getElementById('authToggleQuestion');
       const linkEl = document.getElementById('authToggleLink');
+
+      // 교직원 토글은 회원가입에서만 보인다
+      document.getElementById('staffToggleGroup').style.display =
+        (authMode === 'signup') ? 'flex' : 'none';
+      if (authMode === 'login') {
+        document.getElementById('authIsStaff').checked = false;
+        toggleStaffCode(false);
+      }
 
       if (authMode === 'signup') {
         titleEl.innerText = "학교 웹메일 회원가입";
@@ -2254,7 +2399,9 @@
         problemSummary: pendingComplaintTemp.problemSummary,
         requestSummary: pendingComplaintTemp.requestSummary,
         timestamp: '방금 전',
-        status: '접수'
+        status: '미확인',
+        isMine: true,        // 서버가 세션과 대조해 내려주는 값. 철회 버튼 노출 근거
+        comments: []
       });
 
       chatStep = 'done';
@@ -2385,7 +2532,8 @@
     // Render Drawer Status Feed
     function renderDrawerFeed() {
       const container = document.getElementById('drawerFeedList');
-      const filtered = complaintsData.filter(c => c.schoolDomain === currentSchoolDomain);
+      // 철회된 민원은 목록에 나타나지 않는다
+      const filtered = complaintsData.filter(c => c.schoolDomain === currentSchoolDomain && c.status !== '철회');
       // 사이드바 배지 업데이트
       const badge = document.getElementById('sidebarFeedBadge');
       if (badge) badge.textContent = filtered.length;
@@ -2403,15 +2551,24 @@
         <div class="minimal-status-card">
           <div class="card-top-row">
             <span class="loc-tag-minimal">${c.location}</span>
-            <span class="status-pill status-${c.status}">${c.status === '접수' ? '검토 대기' : c.status}</span>
+            <span class="status-pill status-${c.status}">${c.status}</span>
           </div>
           <div class="card-title-text">${c.refinedTitle}</div>
           <div class="card-summary-box">
             • ${c.problemSummary}
           </div>
+          ${(c.comments || []).filter(x => x.isHoldReason).map(x => `
+            <div style="margin-top:8px; padding:8px 10px; border-radius:8px;
+                        background:#FEF3C7; border-left:3px solid #F59E0B;">
+              <div style="font-size:0.68rem; color:#92400E; font-weight:600; margin-bottom:2px;">보류 사유</div>
+              <div style="font-size:0.78rem; color:#78350F;">${x.content}</div>
+            </div>`).join('')}
           <div class="card-meta-time">
             <span>#${c.id} • ${c.timestamp}</span>
-            <span class="raw-link" onclick="toggleRaw(${c.id})">원문 보기</span>
+            <span style="display:flex; gap:10px; align-items:center;">
+              <span class="raw-link" onclick="toggleRaw(${c.id})">원문 보기</span>
+              ${c.isMine ? `<span class="raw-link" style="color:#B91C1C;" onclick="openWithdrawModal(${c.id})">철회</span>` : ''}
+            </span>
           </div>
           <div class="raw-drawer-box" id="raw-drawer-${c.id}">
             <b>[원문]</b> "${c.rawText}"
@@ -2437,8 +2594,10 @@
 
     function renderAdminTable() {
       const tbody = document.getElementById('adminTableBody');
-      const filtered = complaintsData.filter(c => 
-        c.schoolDomain === currentSchoolDomain && (currentAdminFilter === 'all' || c.status === currentAdminFilter)
+      const filtered = complaintsData.filter(c =>
+        c.schoolDomain === currentSchoolDomain
+        && c.status !== '철회'                    // 철회된 민원은 관리자에게도 안 보인다
+        && (currentAdminFilter === 'all' || c.status === currentAdminFilter)
       );
 
       if (filtered.length === 0) {
@@ -2463,9 +2622,15 @@
           <td><span class="status-pill status-${c.status}">${c.status}</span></td>
           <td>
             <div style="display:flex; gap:0.3rem;">
-              <button class="btn-action-small" style="color:#15803D;" onclick="changeStatus(${c.id}, '수락')">수락</button>
-              <button class="btn-action-small" style="color:#4B5563;" onclick="changeStatus(${c.id}, '보류')">보류</button>
-              <button class="btn-action-small" style="color:#B91C1C;" onclick="changeStatus(${c.id}, '거절')">거절</button>
+              ${c.status === '미확인'
+                ? `<span style="font-size:0.72rem; color:#9CA3AF;">열람하면 결정할 수 있습니다</span>`
+                : c.status === '확인'
+                ? `<button class="btn-action-small" style="color:#15803D;" onclick="changeStatus(${c.id}, '처리중')">수락</button>
+                   <button class="btn-action-small" style="color:#4B5563;" onclick="openHoldModal(${c.id})">보류</button>
+                   <button class="btn-action-small" style="color:#B91C1C;" onclick="changeStatus(${c.id}, '거절')">거절</button>`
+                : c.status === '처리중'
+                ? `<button class="btn-action-small" style="color:#15803D;" onclick="changeStatus(${c.id}, '해결완료')">해결 완료</button>`
+                : `<span style="font-size:0.72rem; color:#9CA3AF;">—</span>`}
             </div>
           </td>
         </tr>
@@ -2475,8 +2640,8 @@
     function updateAdminStats() {
       const schoolList = complaintsData.filter(c => c.schoolDomain === currentSchoolDomain);
       document.getElementById('stat-all').innerText = schoolList.length;
-      document.getElementById('stat-접수').innerText = schoolList.filter(c => c.status === '접수').length;
-      document.getElementById('stat-수락').innerText = schoolList.filter(c => c.status === '수락').length;
+      document.getElementById('stat-접수').innerText = schoolList.filter(c => c.status === '미확인').length;
+      document.getElementById('stat-수락').innerText = schoolList.filter(c => c.status === '처리중' || c.status === '해결완료').length;
       document.getElementById('stat-거절').innerText = schoolList.filter(c => c.status === '거절' || c.status === '보류').length;
     }
 
@@ -2504,7 +2669,41 @@
       document.getElementById('adminModalRefinedTitle').textContent = item.refinedTitle;
       document.getElementById('adminModalRefinedBody').innerHTML =
         `• <b>위치:</b> ${item.location}<br>• <b>문제:</b> ${item.problemSummary}<br>• <b>요청:</b> ${item.requestSummary}`;
+      // ★ 열람 자체가 '확인' 행위 — 미확인이면 자동 전환 (확인 버튼은 존재하지 않는다)
+      if (item.status === '미확인') {
+        item.status = '확인';
+        item.confirmedAt = new Date().toISOString();
+        renderAdminTable();
+        updateAdminStats();
+        showToast(`민원 #${id} 열람 — 상태가 '확인'으로 바뀌었습니다`);
+      }
+
+      // 상태에 따라 보이는 버튼이 다르다
+      document.getElementById('modalDecisionGroup').style.display =
+        (item.status === '확인') ? 'inline-flex' : 'none';
+      document.getElementById('modalResolveGroup').style.display =
+        (item.status === '처리중') ? 'inline-flex' : 'none';
+
+      renderModalComments(item);
       document.getElementById('adminModal').classList.add('open');
+    }
+
+    // 코멘트 목록 (보류 사유는 강조)
+    function renderModalComments(item) {
+      const box = document.getElementById('modalCommentList');
+      if (!box) return;
+      const list = item.comments || [];
+      box.innerHTML = list.length === 0
+        ? `<p style="font-size:0.78rem; color:#9CA3AF; margin:0;">아직 코멘트가 없습니다.</p>`
+        : list.map(c => `
+            <div style="padding:8px 10px; border-radius:8px; margin-bottom:6px;
+                        background:${c.isHoldReason ? '#FEF3C7' : '#F9FAFB'};
+                        border-left:3px solid ${c.isHoldReason ? '#F59E0B' : '#E5E7EB'};">
+              <div style="font-size:0.7rem; color:#6B7280; margin-bottom:2px;">
+                관리자 ${c.isHoldReason ? '· 보류 사유' : ''}
+              </div>
+              <div style="font-size:0.8rem; color:#374151;">${c.content}</div>
+            </div>`).join('');
     }
 
     function closeAdminModal() {
@@ -2517,6 +2716,83 @@
         changeStatus(adminModalTargetId, status);
         closeAdminModal();
       }
+    }
+
+    // ── 보류: 사유 입력이 필수다 ──────────────────────────────
+    let holdTargetId = null;
+    function openHoldModal(id) {
+      holdTargetId = id || adminModalTargetId;
+      document.getElementById('holdReasonInput').value = '';
+      document.getElementById('holdSubmitBtn').disabled = true;
+      document.getElementById('holdModal').classList.add('open');
+    }
+    function closeHoldModal() {
+      document.getElementById('holdModal').classList.remove('open');
+      holdTargetId = null;
+    }
+    function onHoldReasonInput(v) {
+      document.getElementById('holdSubmitBtn').disabled = (v.trim().length === 0);
+    }
+    function submitHold() {
+      const reason = document.getElementById('holdReasonInput').value.trim();
+      if (!reason) return;                       // 빈 사유로는 보류가 성립하지 않는다
+      const item = complaintsData.find(c => c.id === holdTargetId);
+      if (item) {
+        item.comments = item.comments || [];
+        item.comments.push({ content: reason, isHoldReason: true });
+        item.status = '보류';
+      }
+      closeHoldModal();
+      closeAdminModal();
+      renderAdminTable();
+      updateAdminStats();
+      renderDrawerFeed();
+      showToast('보류 처리했습니다 (사유 기록)');
+    }
+
+    // ── 코멘트: 상태와 무관하게 언제든, 누적된다 ──────────────
+    function openCommentModal() {
+      document.getElementById('commentInput').value = '';
+      document.getElementById('commentModal').classList.add('open');
+    }
+    function closeCommentModal() {
+      document.getElementById('commentModal').classList.remove('open');
+    }
+    function submitComment() {
+      const text = document.getElementById('commentInput').value.trim();
+      if (!text) return;
+      const item = complaintsData.find(c => c.id === adminModalTargetId);
+      if (item) {
+        item.comments = item.comments || [];
+        item.comments.push({ content: text, isHoldReason: false });
+        renderModalComments(item);
+        renderDrawerFeed();
+      }
+      closeCommentModal();
+      showToast('코멘트를 추가했습니다');
+    }
+
+    // ── 철회: 학생 본인만, 비밀번호 확인 ──────────────────────
+    let withdrawTargetId = null;
+    function openWithdrawModal(id) {
+      withdrawTargetId = id;
+      document.getElementById('withdrawPassword').value = '';
+      document.getElementById('withdrawModal').classList.add('open');
+    }
+    function closeWithdrawModal() {
+      document.getElementById('withdrawModal').classList.remove('open');
+      withdrawTargetId = null;
+    }
+    function submitWithdraw() {
+      const pw = document.getElementById('withdrawPassword').value;
+      if (!pw) return;
+      const item = complaintsData.find(c => c.id === withdrawTargetId);
+      if (item) item.status = '철회';            // 하드 삭제가 아니라 상태 전환
+      closeWithdrawModal();
+      renderDrawerFeed();
+      renderAdminTable();
+      updateAdminStats();
+      showToast('민원을 철회했습니다');
     }
 
     function showToast(msg) {
