@@ -41,6 +41,7 @@
     │   │   ├── llm/         LLM 클라이언트 추상화 (base + gpt-oss 구현)
     │   │   │   └── prompts/    프롬프트 템플릿 (코드에서 분리)
     │   │   ├── schemas/     Pydantic 요청·응답 계약
+    │   │   ├── storage/     첨부 파일 저장 추상화 (로컬 → S3)
     │   │   └── services/    도메인 로직 (chat / document·canvas)
     │   └── tests/
     │       ├── unit/          services·llm — 외부 의존 없음
