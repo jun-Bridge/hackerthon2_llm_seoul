@@ -508,9 +508,10 @@ POST /chat-sessions/{sid}/messages   { message | choice }
   ├ session.acquire_turn(sid)                       이미 돌면 409
   │
   ├ conversation_repo.add(conn, sid, 'student', text)
-  ├ history = conversation_repo.list(conn, sid)
+  ├ context, buffer = chat_session_repo.load_context(conn, sid)
+  │    context = 세션주제(압축된 맥락) · buffer = compacted_upto 이후 원문
   │
-  ├ llm.refine(history)                             ← 도구 둘을 붙여 호출
+  ├ llm.refine(context, buffer)                     ← 세션주제 + 버퍼만. 도구 둘을 붙여 호출
   │    └ bedrock_log_repo.add(...)
   │
   ├─ ask_followup 인 경우
@@ -525,7 +526,10 @@ POST /chat-sessions/{sid}/messages   { message | choice }
        ├ state.set(sid, step='confirm')
        └ return { is_complete:true, preview }
   │
-  └ session.release_turn(sid)      finally — 실패로 끝나도 반드시
+  ├ session.release_turn(sid)      finally — 실패로 끝나도 반드시
+  │
+  └ (백그라운드) 미압축 분량이 임계치를 넘었으면 압축 (§7.4)
+       실패해도 응답에는 영향이 없다
 ```
 
 ### 7-1.4 "다음"으로 넘어간다는 것
@@ -612,10 +616,13 @@ POST /chat-sessions/{sid}/messages { "message": "카테고리를 다시 고를�
 | **대화 기록** | PostgreSQL | 학생이 처음부터 다시 설명해야 한다 |
 | **확정안** (`refined_json`) | PostgreSQL | 접수를 못 한다 |
 | 세션 목록·제목 | PostgreSQL | 과거 대화를 못 찾는다 |
+| **세션주제**(압축된 맥락) | PostgreSQL | LLM 비용을 다시 치러야 하고, 그 사이 맥락 없이 대화가 돈다 |
+| 압축 경계 (`compacted_upto`) | PostgreSQL | 어디까지 압축했는지 몰라 중복 압축된다 |
 | 로그인 세션 | Redis | 다시 로그인하면 된다 |
 | 초안 소유권 | Redis | 초안을 못 이어 쓴다 (새로 시작) |
 | 턴 진행 표시 | Redis | 중복 호출이 한 번 날 수 있다 |
 | 단계·반복 횟수 | Redis | 칩이 안 보인다. 대화는 멀쩡하다 |
+| 압축 진행 표시 | Redis | 압축이 두 번 돌 수 있다. 다음 턴에 정리된다 |
 
 **작업본(working copy) 방식을 쓰지 않는다.** 문서를 편집하는 서비스라면 Redis에 사본을 두고
 나중에 내려쓰는 게 맞지만, 여기서 쌓이는 것은 **append-only 대화**다.
@@ -735,7 +742,20 @@ data = json.loads(resp["body"].read())
 
 ### 8.3 messages 조립
 
-DB의 대화 기록을 Anthropic 포맷으로 옮긴다.
+**세션주제는 `system`에, 버퍼는 `messages`에.**
+
+```python
+body = {
+    "system": SYSTEM_PROMPT + (f"\n\n[지금까지의 맥락]\n{context}" if context else ""),
+    "messages": _to_messages(buffer),
+    ...
+}
+```
+
+**압축된 맥락을 `messages`에 사용자 발화처럼 끼워 넣지 않는다** —
+모델이 그것을 학생이 방금 한 말로 읽는다.
+
+버퍼를 Anthropic 포맷으로 옮긴다.
 
 ```python
 # repo의 role 값 → Anthropic role 값
@@ -874,7 +894,9 @@ class RefineResult:
     refined_body: str | None
     session_title: str | None
 
-def refine(history: list[dict]) -> RefineResult: ...
+def refine(context: str | None, buffer: list[dict]) -> RefineResult: ...
+def compact(prev_context: str | None, messages: list[dict]) -> CompactResult: ...
+    # CompactResult = { context, title } — 요약 전용. 도구를 붙이지 않는다
 ```
 
 **`boto3`·`anthropic_version`·`tool_use` 같은 말이 서비스 계층에 등장하지 않는다.**
@@ -959,6 +981,8 @@ def signup(email, password, admin_code):
 ## 12. 정할 것
 
 - 커넥션 풀 크기와 워커 수 (PostgreSQL `max_connections`와 함께)
+- **버퍼 크기 N과 압축 임계치** — 작으면 압축이 자주 돌아 비용이 늘고, 크면 맥락이 길어진다
+- **압축용 모델** — 본 응답과 같은 것을 쓸지 더 싼 것을 쓸지
 - 세션 TTL · 초안 TTL · 턴 TTL
 - `verify_password` 실패 횟수 제한
 - 마이그레이션 도구 (Alembic을 쓸지, `init_db.py` 한 장으로 갈지)
