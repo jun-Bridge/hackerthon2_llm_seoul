@@ -44,3 +44,15 @@ requirements.md 초안 작성 시작 — 슬롯 전부 TBD.
 - **핵심 규칙 확정**: 문서 편집은 항상 새 버전을 만든다. 복원도 새 버전. 원본 불변 — 백엔드(`canvas_service`)와 프론트(`canvas/`) 양쪽 README에 동일하게 명시.
 - 새로 드러난 미정: 인증·사용자 모델(문서 소유자 식별), 문서 본문 포맷, 버전 보관 정책(스냅샷 vs diff).
 - git remote를 HTTPS → SSH(`git@github.com:jun-Bridge/hackerthon2_llm_seoul.git`)로 변경. 이 머신에 자격증명 헬퍼가 없어 HTTPS push가 막혔고, `~/.ssh/id_ed25519`가 이미 jun-Bridge로 인증됨. `main` push 완료.
+
+## [2026-08-27] 요구사항 1차 정리 (브레인스토밍 받아적기)
+- **서비스 정의**: 대화하며 LLM과 문서를 만드는 웹 툴. LLM은 문서를 **소유하지 않고 함수(tool call)로 읽고 쓴다.** 사용자가 자유롭게 편집해도 LLM이 항상 최신을 읽는다는 것이 이 설계의 요점.
+- **쳐낸 것**: 카카오 연동, 팀 기능, 사용자 맞춤·성향 추론, 테마, 이미지, 세션 간 크로스 참조. "오직 툴" 방향.
+- **블록 id 채택**: LLM이 문자 offset으로 위치를 가리키면 사용자가 그 사이 편집한 순간 어긋난다. 안정적 블록 id로 가리켜야 자유 편집과 LLM 수정이 공존한다.
+- **편집 잠금(세마포어)**: LLM 쓰기 도구 호출 시 문서를 잠그고 프론트는 블러 + 입력 차단. 턴 종료 시 해제. 실패·연결 끊김에도 영구 잠기지 않도록 타임아웃 필수 — 이걸 수용기준에 넣었다.
+- **TA(TravelArchive, `NAS/1_TravelArchive_Dev`)는 참고만.** 코드 이식 아님. `chat_session_container.py`(214줄) 동작만 확인:
+  요청마다 Redis에서 복원하는 비상주 컨테이너 · 최근 버퍼 + `context` 요약 문자열 · 버퍼가 차면 absorb LLM이 title/context 재생성 후 버퍼 비움 · `is_manual_title`로 수동 제목 보호 · redis 없으면 in-memory 임시 세션.
+  - **가져올 개념**: 위 동작 원리.
+  - **버릴 것**: 성향 추론(`personalization_topic`), 위젯 상태, 여행 도메인 라우팅, TA의 `kernel/`·`router/`·`widget/`·`memory/` 일체.
+  - **결정적 차이**: TA는 widget_state를 컨테이너가 소유해 프롬프트에 주입. 우리는 문서를 소유하지 않고 tool로 읽는다 → 컨테이너 상태가 stale해지지 않는다.
+- 수용기준을 M0~M4 마일스톤으로 분해, 전부 테스트·수치로 판정 가능하게 작성.

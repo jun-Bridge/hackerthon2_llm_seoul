@@ -1,71 +1,167 @@
-# Requirements — hackerthon2_llm_1
+# Requirements — hackerthon2_llm_seoul
 _created: 2026-08-27 · status: **drafting** → reviewing → approved(사용자 "됐다" 시 승격, 이때만 빌드 착수)_
 
+> 이 문서는 **WHAT의 단일 진실원천**이다. 결정의 *이유*와 과정은 `dev-log.md`.
+
 ## 1. 목적 (한 문장)
-TBD
+대화하면서 LLM과 함께 문서를 만들어 나가는 웹 서비스 — **LLM은 함수 호출로 캔버스 문서를 읽고 쓰기만 하고(소유하지 않고), 사용자는 같은 문서를 언제든 직접 편집한다.**
 
 ## 2. 사용자·이해관계자
-TBD
+- **주 사용자**: 개인 사용자. 로그인 후 자기 세션과 문서만 본다. 공유·협업 없음.
+- **이해관계자**: 해커톤 팀(구현), 심사(데모).
+- 다중 사용자가 같은 문서를 동시에 보는 상황은 없다.
 
 ## 3. 범위
 ### In scope
-- 웹 LLM 서비스 애플리케이션 코드 (백엔드 + 프론트엔드)
-- **문서화(캔버스) 기능** — 상세 정의 TBD (슬롯 4)
-- 로컬 개발용 컨테이너 정의 (`docker/`)
-- git 연동 (origin: `jun-Bridge/hackerthon2_llm_seoul`)
-### Out of scope (YAGNI)
+- **자체 계정 시스템** — 가입·로그인·로그아웃·세션 유지. 소셜 로그인 없음.
+- **채팅 세션 관리** — 새 세션 생성, 현재 대화, 과거 대화 목록, 세션별 주제(제목 자동 생성)
+- **세션 컨테이너** — 대화 상태를 Redis에 두고 요청마다 복원. 버퍼가 차면 요약(absorb)으로 압축.
+- **텍스트 대화** — 스트리밍 응답
+- **캔버스 문서** — 세션에 딸린 문서 하나. LLM이 **함수(tool call)로 읽고 쓴다.**
+- **사용자 직접 편집** — 사용자가 캔버스를 자유롭게 고쳐도 LLM이 다음 턴에 최신 상태를 읽는다.
+- **편집 잠금(세마포어)** — LLM이 문서를 수정하는 동안 캔버스를 블러 처리하고 사용자 편집을 잠근다. 끝나면 푼다.
+- 로컬 개발용 컨테이너 정의(`docker/`), git 연동
+
+### Out of scope (YAGNI — 의도적으로 쳐낸 것)
+> **이 서비스는 "툴"이다.** 꾸밈·맞춤·부가 기능은 전부 없다. 텍스트 대화와 캔버스, 끝.
+
+- **카카오톡 관련 전부** — 소셜 로그인, 카카오 API 연동. 자체 계정으로 대체.
+- **팀 기능 전부** — 팀 생성·초대·공유·권한. 문서는 소유자 1인만.
+- **사용자 맞춤·성향 추론 전부** — 세션 주제로 성향을 뽑거나, 사용자별로 동작을 바꾸는 것 없음. 세션은 서로 독립.
+- **테마 기능** — 다크모드·색 테마 선택 없음. 한 벌로 고정.
+- **이미지 전부** — 업로드·표시·생성 없음. 텍스트만.
+- **세션 간 크로스 참조** — 한 세션이 다른 세션의 내용을 알지 못한다.
+- 화려한 UI. 텍스트 대화 + 캔버스, 그 이상 없음.
 - **AWS 프로비저닝·배포·업로드 — Kiro IDE에서 별도 처리.** 이 레포는 개발 + git까지.
-- 프로덕션 인프라 정의(Terraform·ECS 태스크 정의 등)
+- 파일 업로드·RAG·이미지 (TBD — 슬롯 9)
 
 ## 4. 핵심 유스케이스
-TBD
+1. **가입·로그인** — 자체 계정으로 가입하고 로그인한다. 이후 요청은 로그인 상태로 인증된다.
+2. **새 세션 시작** — 새 대화를 연다. 첫 대화가 오가면 세션에 주제(제목)가 붙는다.
+3. **과거 세션 이어가기** — 목록에서 과거 세션을 골라 열면 그 대화와 그 문서가 그대로 복원된다.
+4. **LLM이 문서를 쓴다** — 대화 중 "정리해줘"류 요청에 LLM이 캔버스 쓰기 함수를 호출한다. 사용자는 캔버스에 내용이 채워지는 것을 본다.
+5. **사용자가 직접 고친다** — 캔버스에서 사용자가 문단을 수정·추가·삭제한다. 저장된다.
+6. **LLM이 사용자 편집분을 반영한다** — 사용자가 고친 뒤 "이거 더 다듬어줘"라고 하면, LLM이 읽기 함수로 **최신 본문**을 가져와 작업한다. (LLM이 문서를 컨텍스트에 들고 있지 않으므로 stale해지지 않는다.)
+7. **부분 수정** — "세 번째 문단만 짧게"에 LLM이 해당 블록만 교체하고 나머지는 건드리지 않는다.
+8. **세션 관리** — 세션 이름 변경·삭제.
 
-## 5. 비기능 제약 (성능·리소스·보안·가용성)
-TBD
+## 5. 비기능 제약
+- **LLM tool calling 필수** — 캔버스 전체가 함수 호출 위에 서 있다. gpt-oss-120b가 이를 지원하는지 **빌드 전 실측 확인**(슬롯 9 리스크).
+- **응답 스트리밍** — 토큰 단위로 도착. tool call 진행 중에도 사용자가 상태를 본다.
+- **세션 독립** — 세션 간 데이터가 섞이지 않는다.
+- **인가** — 모든 세션·문서 접근은 소유자 확인을 거친다. 남의 id를 넣어도 못 본다.
+- **편집 잠금** — LLM 수정 중에는 사용자 편집이 잠긴다. 잠금은 반드시 풀린다 — LLM 응답 실패·연결 끊김에도 문서가 영구 잠기지 않아야 한다(타임아웃 필요).
+- **시크릿은 `.env`만.** 비밀번호는 해시 저장(평문 금지).
+- 해커톤 기간 내 구현 가능할 것 — 애매하면 기능을 쳐낸다.
 
-## 6. 데이터·계약 (스키마·API·인터페이스)
-> 초안. 목적·유스케이스(슬롯 1·4) 확정 시 재검토.
+## 6. 데이터·계약
 
-**PostgreSQL**
-- `conversation` ──< `message` (role, content, created_at)
-- `document` ──< `document_version` (본문 스냅샷, 생성 주체: human|llm, created_at)
-- `document.current_version_id` → `document_version`
-- 편집은 **항상 새 버전**을 만든다. 복원도 새 버전으로 쌓는다(원본 불변).
+### PostgreSQL
+```
+user ──< session ──< message
+              └──── document ──< block
+```
+- `user` — id, email, password_hash, created_at
+- `session` — id, user_id, title(주제), created_at, updated_at
+- `message` — id, session_id, role(user|assistant|tool), content, created_at
+- `document` — id, session_id (세션당 1개), updated_at
+- `block` — id, document_id, order, content, updated_at
+- `document.locked_by` / `locked_at` — LLM 작업 중 잠금 상태. 타임아웃 경과 시 자동 해제.
+  - **블록 단위인 이유**: LLM이 문자 offset으로 위치를 가리키면 사용자가 그 사이 편집한 순간 어긋난다. 안정적인 블록 id로 가리켜야 사용자 자유 편집과 LLM 수정이 공존한다.
 
-**Redis**
-- 세션 상태 · LLM 토큰 스트림 버퍼(SSE 재연결용) · 단기 캐시. **잃어도 되는 것만.**
+### 캔버스 함수 (LLM tool 정의)
+LLM에 노출되는 도구. **LLM은 문서를 컨텍스트에 소유하지 않고, 필요할 때 호출해서 읽는다.**
+- `read_document()` → 블록 목록 `[{id, order, content}]`
+- `write_block(block_id, content)` → 해당 블록 내용 교체
+- `insert_block(after_block_id | null, content)` → 새 블록 삽입 (null이면 맨 앞)
+- `delete_block(block_id)`
+- `replace_document(blocks[])` → 전체 재작성 (초안 생성용)
 
-**HTTP API (초안)**
-- `GET  /health`
-- `POST /chat` · `GET /chat/{id}/stream` (SSE)
-- `GET|POST /documents` · `GET /documents/{id}` · `GET /documents/{id}/versions` · `POST /documents/{id}/restore`
-- `POST /documents/{id}/edit-selection` — 선택 범위(offset) + 지시문 → 새 버전
+**편집 잠금 흐름**: LLM이 쓰기 도구를 처음 호출하는 순간 문서가 잠긴다 → 프론트가 캔버스를 블러 처리하고 입력을 막는다 → LLM 턴이 끝나면 해제되고 블러가 걷힌다. 잠금·해제는 SSE로 프론트에 통지한다. 읽기(`read_document`)는 잠그지 않는다.
 
-**LLM 인터페이스**
-- `app/llm/base.py`의 `complete()` / `stream()`만 서비스에 노출. 구현은 OpenAI 호환 엔드포인트(`LLM_BASE_URL`).
+### Redis — 세션 컨테이너
+- `session:{id}:meta` — title, context(요약), is_manual_title
+- `session:{id}:buf_msgs` — 최근 메시지 버퍼
+- `session:{id}:msg_count` — 사용자 메시지 누적 수
+- 그 외: 로그인 세션 · LLM 토큰 스트림 버퍼(SSE 재연결)
+- Redis 내용은 **잃어도 복구 가능해야 한다** — 확정된 메시지·문서는 Postgres가 진실원천.
 
-**미정**: 인증·사용자 모델(문서 소유자를 어떻게 식별하나), 문서 본문 포맷(마크다운/리치텍스트), 버전 보관 정책(전문 스냅샷 vs diff).
+### 세션 컨테이너 동작
+> TravelArchive의 `chat_session_container.py`를 **참고**한 구조. 코드를 옮기지 않고 동작 원리만 가져온다.
+
+1. **상주하지 않는다.** 요청마다 컨테이너를 새로 만들고 Redis에서 상태를 복원한다.
+2. **버퍼 + 요약**: 최근 메시지 N개만 버퍼에 두고, 그보다 오래된 맥락은 `context` 문자열 하나로 압축해 들고 간다.
+3. **absorb**: 버퍼가 가득 차거나 첫 메시지일 때, 별도 LLM 호출로 대화를 압축해 `title`(세션 제목)과 `context`(요약)를 새로 뽑고 **버퍼를 비운다.** 세션 제목은 여기서 자동 갱신된다.
+4. **수동 제목 보호**: 사용자가 제목을 직접 정하면(`is_manual_title`) absorb가 덮어쓰지 않는다.
+5. **턴 커밋**: 유저·봇 메시지를 버퍼에 넣고 저장한 뒤 absorb 필요 여부를 판단한다.
+
+**TA와 다른 점 (핵심)**: TA는 위젯 상태를 컨테이너가 소유해 프롬프트에 밀어넣는다. 우리는 **문서를 소유하지 않는다** — LLM이 필요할 때 `read_document()`로 읽는다. 그래서 사용자가 문서를 아무리 고쳐도 컨테이너 상태가 stale해지지 않는다.
+
+**가져오지 않는 것**: 사용자 성향(`personalization_topic`), 위젯 상태, 여행 도메인 라우팅. TA의 `kernel/`·`router/`·`widget/`·`memory/` 일체는 참고 대상이 아니다.
+
+### HTTP API (초안)
+- `POST /auth/signup` · `POST /auth/login` · `POST /auth/logout` · `GET /auth/me`
+- `GET|POST /sessions` · `GET|PATCH|DELETE /sessions/{id}`
+- `POST /sessions/{id}/messages` · `GET /sessions/{id}/stream` (SSE)
+- `GET /sessions/{id}/document` · `PATCH /documents/{id}/blocks/{block_id}` (사용자 직접 편집 — 잠금 중이면 409)
+
+### LLM 인터페이스
+- `app/llm/base.py`의 `complete()` / `stream()` / **`stream_with_tools()`** 만 서비스에 노출.
+- 도구 정의·실행은 `app/llm/tools/`. 실행 본체는 `services/canvas_service.py`.
 
 ## 7. 기술 스택·환경
 - **백엔드**: Python + FastAPI. `src/backend/`
 - **프론트엔드**: React + Vite + TypeScript. 시안은 Figma. `src/frontend/`
-- **LLM**: 로컬 **gpt-oss-120b**. OpenAI 호환 엔드포인트로 서빙(vLLM 등) 가정.
-  클라이언트는 `app/llm/base.py` 인터페이스 뒤로 추상화 — 모델·서빙 백엔드 교체가 `llm/` 안에서 끝나게.
-- **DB**: PostgreSQL (영속 — 대화·문서·버전), Redis (캐시·세션·스트리밍 버퍼).
-  `app/db/` 아래 **엔진별 독립 모듈**(`postgres/`, `redis/`)로 분리. 서로 import하지 않고, 조합은 `services/`에서.
-- **컨테이너**: Docker. 이 레포의 `docker/`는 **로컬 개발용**.
-- **배포**: AWS — **Kiro IDE에서 처리. 이 레포 범위 밖**(슬롯 3 Out of scope).
+- **LLM**: 로컬 **gpt-oss-120b**, OpenAI 호환 엔드포인트로 서빙. **tool calling 사용.**
+- **DB**: PostgreSQL(영속) + Redis(휘발). `app/db/` 아래 엔진별 독립 모듈, 서로 import 금지.
+- **컨테이너**: Docker (이 레포의 `docker/`는 로컬 개발용)
+- **배포**: AWS — Kiro IDE 담당, 이 레포 범위 밖.
+- **참조 프로젝트**: TravelArchive (`NAS/1_TravelArchive_Dev`). **참고만 한다 — 코드 이식이 아니다.** 계정·세션 구조를 어떻게 짰는지 보는 용도.
 - **디자인 언어**: Figma 시안 기준. DESIGN.md 미고정 — TBD.
 
-## 8. 수용 기준 (Acceptance — 기계검증 가능: 테스트·명령·수치. 마일스톤별)
-TBD
+## 8. 수용 기준 (Acceptance — 기계검증 가능. 마일스톤별)
+
+### M0 — 스켈레톤
+- `docker compose -f docker/compose.dev.yml up`으로 postgres·redis·backend·frontend가 뜬다
+- `GET /health`가 200과 함께 db·redis 연결 상태를 반환한다
+- `pytest`가 0개 실패로 통과한다 (테스트 존재)
+
+### M1 — 계정
+- 가입 → 로그인 → `GET /auth/me`가 그 사용자를 반환한다 (통합 테스트)
+- 잘못된 비밀번호로 로그인하면 401
+- DB에 평문 비밀번호가 없다 (해시 컬럼만 존재 — 테스트로 검증)
+- 로그인 없이 `/sessions` 호출 시 401
+
+### M2 — 세션·대화
+- 세션 생성 후 목록에 나타난다. 다른 사용자의 세션은 목록에 없다
+- 남의 세션 id로 접근 시 404 또는 403 (테스트)
+- 메시지를 보내면 저장되고, SSE로 토큰이 스트리밍된다 (fake LLM으로 결정론적 검증)
+- 세션 삭제 시 딸린 메시지·문서·블록이 함께 사라진다
+
+### M3 — 캔버스 함수
+- fake LLM이 `write_block` tool call을 내면 해당 블록만 바뀌고 다른 블록은 그대로다 (테스트)
+- `read_document()`가 **사용자가 직접 수정한 최신 내용**을 반환한다 (사용자 PATCH 후 읽기 테스트)
+- `insert_block` / `delete_block` 후 `order`가 깨지지 않는다
+- 잘못된 `block_id`로 tool call이 오면 오류를 LLM에 되돌려주고 서버가 죽지 않는다
+- LLM이 쓰기 도구를 호출하면 문서가 잠기고, 잠금 중 사용자 PATCH는 409를 받는다 (테스트)
+- LLM 턴이 예외로 끝나도 잠금이 해제된다 (테스트)
+- 잠금이 타임아웃을 넘기면 자동 해제된다 (테스트)
+
+### M4 — 통합
+- 실제 gpt-oss 엔드포인트로 유스케이스 4·6·7이 수동 재현된다
+- 프론트에서 로그인 → 세션 생성 → 대화 → 캔버스 갱신 → 직접 편집 → 재요청이 끊김 없이 동작한다
+- LLM 수정 중 캔버스가 블러 처리되고 입력이 막히며, 끝나면 정상 복귀한다
 
 ## 9. 리스크·미결 (TBD)
-- ~~[충돌] 로컬 Ollama vs Vercel 배포~~ → **해소**: 배포 대상이 AWS + Docker로 확정(2026-08-27).
-- **[리스크] gpt-oss-120b 서빙 자원**: 117B MoE 모델. MXFP4 양자화 기준 단일 80GB급 GPU가 필요하다.
-  개발 중 어느 엔드포인트를 붙일지 미정 — 로컬 GPU가 없으면 개발 단계에서 소형 모델로 대체할지 결정 필요.
-- ~~[미정] 캔버스 기능의 실제 동작~~ → **확정: 편집형(ChatGPT/Claude Canvas형)** (2026-08-27).
-  LLM이 생성한 문서를 옆 패널에 띄우고, 사람이 직접 편집하거나 선택 영역만 LLM에 재요청한다.
-  파생 미정 사항 — 문서 포맷(마크다운/리치텍스트), 버전 보관 정책(전문 스냅샷 vs diff), 동시 편집 지원 여부(단일 사용자면 불필요).
-- 서비스 목적(슬롯 1)·유스케이스(슬롯 4) 미정 — 사용자 요청으로 보류 중. 수용기준(슬롯 8)이 여기 종속.
+- **[블로커] gpt-oss-120b의 tool calling 지원 여부** — 캔버스 전체가 여기 얹혀 있다. 지원이 불완전하면 대안(구조화 출력 파싱)으로 선회해야 하므로 **M0에서 실측**해야 한다.
+- ~~[미정] "세션 컨테이너"~~ → **확정**: 요청마다 Redis에서 복원하는 비상주 상태 그릇. 버퍼 + absorb 요약. 슬롯 6 참조.
+- ~~[미정] 세션 주제(title) 생성 방식~~ → **확정**: absorb가 자동 생성. 사용자가 직접 바꾸면 그 뒤로 덮어쓰지 않음.
+- **[미정] 버퍼 크기 N과 absorb 주기** — TA는 6. 우리 대화 길이에 맞춰 실측 후 결정.
+- **[미정] absorb용 LLM** — 본 응답과 같은 gpt-oss를 쓸지, 더 작은 모델을 쓸지. 같은 걸 쓰면 매 absorb마다 120B를 한 번 더 태운다.
+- **[미정] 비로그인 임시 세션** — TA는 Redis 없이 in-memory로 돌린다. 우리도 지원할지, 로그인 필수로 갈지.
+- **[미정] 문서 버전 이력** — 편집 이력·되돌리기를 둘지. "툴" 방향과 해커톤 범위를 보면 빼는 쪽이 자연스럽다.
+- **[미정] 블록 content 포맷** — 마크다운 텍스트 / 리치텍스트. 마크다운이 단순.
+- **[미정] 파일 업로드·RAG** — 현재 Out of scope. (이미지는 명시적으로 제외 확정)
+- **[미정] 잠금 타임아웃 값** — LLM 응답이 길어질 때를 감당하면서 사고 시 오래 잠기지 않을 값. 실측 후 결정.
+- ~~[미정] 동시 편집 충돌~~ → **해소: 세마포어 잠금**(LLM 작업 중 사용자 편집 차단 + 블러).
 - 해커톤 일정·제출 마감 미확인
