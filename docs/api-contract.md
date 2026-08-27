@@ -118,239 +118,479 @@ interface ConversationTurn {
 
 ---
 
-## 1. 연결부 전체 목록
+## 1. 연결부 한눈에
 
-프론트 함수는 `src/api/` 아래 도메인별 모듈에, 백엔드 라우터는 `app/api/routes/` 아래에 둔다.
+22개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
-### 인증 (`api/auth.js` ↔ `routes/auth.py`)
+| # | 프론트 함수 | HTTP | 백엔드 함수 | 무엇을 하나 | 건드리는 테이블 |
+|---|---|---|---|---|---|
+| 1 | `lookupSchool` | `POST /auth/school-lookup` | `lookup_school` | 이메일 도메인으로 학교 확인 | `schools` R |
+| 2 | `signup` | `POST /auth/signup` | `signup` | 가입 + 자동 로그인 | `schools` R · `admin_codes` R · `users` W |
+| 3 | `login` | `POST /auth/login` | `login` | 로그인 | `users` R |
+| 4 | `logout` | `POST /auth/logout` | `logout` | 세션 삭제 | — |
+| 5 | `getMe` | `GET /auth/me` | `get_me` | 내 정보·역할 | `users` R · `schools` R |
+| 6 | `changePassword` | `PATCH /auth/password` | `change_password` | 비밀번호 변경 | `users` R/W |
+| 7 | `deleteAccount` | `DELETE /auth/me` | `delete_account` | 탈퇴 | `users` D · `complaints` W(SET NULL) |
+| 8 | `startDraft` | `POST /drafts` | `create_draft` | 작성용 키 발급 | — |
+| 9 | `sendMessage` | `POST /drafts/{k}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 |
+| 10 | `getDraftConversation` | `GET /drafts/{k}/conversation` | `get_draft_conversation` | 대화 복구 | `complaint_conversations` R |
+| 11 | `submitDraft` | `POST /drafts/{k}/submit` | `submit_draft` | **정식 접수** | `complaints` W · `complaint_conversations` W |
+| 12 | `listComplaints` | `GET /complaints` | `list_complaints` | 게시판 목록 | `complaints` R |
+| 13 | `getComplaint` | `GET /complaints/{id}` | `get_complaint` | 상세 (상태 안 바뀜) | `complaints` R · `complaint_comments` R |
+| 14 | `getComplaintConversation` | `GET /complaints/{id}/conversation` | `get_complaint_conversation` | 원문 보기 | `complaint_conversations` R |
+| 15 | `withdrawComplaint` | `POST /complaints/{id}/withdraw` | `withdraw` | 철회 | `users` R · `complaints` W |
+| 16 | `getStats` | `GET /admin/stats` | `get_stats` | 상태별 집계 | `complaints` R |
+| 17 | `openComplaint` | `POST /admin/complaints/{id}/open` | `open_complaint` | **상세 + 확인 자동전환** | `complaints` R/W · `complaint_comments` R |
+| 18 | `acceptComplaint` | `POST /admin/complaints/{id}/accept` | `accept` | 확인 → 처리중 | `complaints` W |
+| 19 | `resolveComplaint` | `POST /admin/complaints/{id}/resolve` | `resolve` | 처리중 → 해결완료 | `complaints` W |
+| 20 | `holdComplaint` | `POST /admin/complaints/{id}/hold` | `hold` | 확인 → 보류 **+ 사유** | `complaints` W · `complaint_comments` W |
+| 21 | `rejectComplaint` | `POST /admin/complaints/{id}/reject` | `reject` | 확인 → 거절 | `complaints` W |
+| 22 | `addComment` | `POST /admin/complaints/{id}/comments` | `add_comment` | 코멘트 추가 | `complaint_comments` W |
 
-| 기능 | 프론트 함수 | HTTP | 백엔드 함수 | 서비스 계층 |
-|---|---|---|---|---|
-| 이메일로 학교 확인 | `lookupSchool(email)` | `POST /api/auth/school-lookup` | `lookup_school()` | `db.find_school_by_email()` |
-| 가입 | `signup(email, pw, role, adminCode?)` | `POST /api/auth/signup` | `signup()` | `db.verify_admin_code()` → `db.create_user()` |
-| 로그인 | `login(email, pw)` | `POST /api/auth/login` | `login()` | `db.authenticate_user()` |
-| 로그아웃 | `logout()` | `POST /api/auth/logout` | `logout()` | 세션 삭제 |
-| 내 정보 | `getMe()` | `GET /api/auth/me` | `get_me()` | 세션 조회 |
-| 비밀번호 변경 | `changePassword(current, next)` | `PATCH /api/auth/password` | `change_password()` | `db.verify_password()` → `db.change_password()` |
-| 탈퇴 | `deleteAccount(pw)` | `DELETE /api/auth/me` | `delete_account()` | `db.verify_password()` → `db.delete_user()` |
-
-### 민원 작성 — 학생 (`api/draft.js` ↔ `routes/draft.py`)
-
-| 기능 | 프론트 함수 | HTTP | 백엔드 함수 | 서비스 계층 |
-|---|---|---|---|---|
-| 새 작성 시작 | `startDraft()` | `POST /api/drafts` | `create_draft()` | `draft_key` 발급 |
-| 메시지 보내기 | `sendMessage(draftKey, text)` | `POST /api/drafts/{draft_key}/messages` | `send_message()` | `ComplaintService.send_message()` |
-| 대화 다시 읽기 | `getDraftConversation(draftKey)` | `GET /api/drafts/{draft_key}/conversation` | `get_conversation()` | `db.get_conversation()` |
-| 정식 접수 | `submitDraft(draftKey)` | `POST /api/drafts/{draft_key}/submit` | `submit_draft()` | `ComplaintService.submit()` |
-
-### 게시판 — 학생 (`api/board.js` ↔ `routes/board.py`)
-
-| 기능 | 프론트 함수 | HTTP | 백엔드 함수 | 서비스 계층 |
-|---|---|---|---|---|
-| 목록 | `listComplaints(status?)` | `GET /api/complaints` | `list_complaints()` | `db.list_complaints()` |
-| 상세 | `getComplaint(id)` | `GET /api/complaints/{id}` | `get_complaint()` | `db.get_complaint()` + `db.get_comments()` |
-| 원문 대화 | `getComplaintConversation(id)` | `GET /api/complaints/{id}/conversation` | `get_complaint_conversation()` | `db.get_conversation_by_complaint()` |
-| 철회 | `withdrawComplaint(id, pw)` | `POST /api/complaints/{id}/withdraw` | `withdraw()` | `ComplaintService.withdraw()` |
-
-### 관리자 (`api/admin.js` ↔ `routes/admin.py`)
-
-| 기능 | 프론트 함수 | HTTP | 백엔드 함수 | 서비스 계층 |
-|---|---|---|---|---|
-| 통계 | `getStats()` | `GET /api/admin/stats` | `get_stats()` | `db.get_complaint_stats()` |
-| 상세 열람 **(확인 전환)** | `openComplaint(id)` | `POST /api/admin/complaints/{id}/open` | `open_complaint()` | `ComplaintService.open_detail()` |
-| 수락 → 처리중 | `acceptComplaint(id)` | `POST /api/admin/complaints/{id}/accept` | `accept()` | `ComplaintService.accept()` |
-| 해결 완료 | `resolveComplaint(id)` | `POST /api/admin/complaints/{id}/resolve` | `resolve()` | `ComplaintService.resolve()` |
-| 보류 (사유 필수) | `holdComplaint(id, reason)` | `POST /api/admin/complaints/{id}/hold` | `hold()` | `ComplaintService.hold()` |
-| 거절 | `rejectComplaint(id)` | `POST /api/admin/complaints/{id}/reject` | `reject()` | `ComplaintService.reject()` |
-| 코멘트 추가 | `addComment(id, text)` | `POST /api/admin/complaints/{id}/comments` | `add_comment()` | `ComplaintService.add_comment()` |
-
-관리자 API는 전부 `role == 'admin'` 검사를 통과해야 한다. 학생이 부르면 **403**.
-목록·상세 조회는 학생과 같은 `/api/complaints`를 쓴다 — 응답이 같기 때문에 나눌 이유가 없다.
+`R` 읽기 · `W` 쓰기 · `D` 삭제. 16~22는 `role == 'admin'` 필수, 아니면 403.
+**모든 `complaints` 접근에는 `WHERE school_id = <세션값>`이 붙는다.** 아래 개별 항목에서 반복하지 않는다.
 
 ---
 
-## 2. 엔드포인트 상세
+## 2. 함수별 상세
 
-### 2.1 인증
+### 2.1 인증 — `api/auth.js` ↔ `routes/auth.py`
 
-**`POST /api/auth/school-lookup`** — 가입 화면에서 이메일을 다 치면 호출한다.
-학교 이름을 미리 보여줘 오타를 잡고, 관리자 코드 입력칸을 띄울지 결정한다.
+---
 
+#### 1. `lookupSchool` — 이메일로 학교 확인
+
+```js
+// src/api/auth.js
+/** 가입 화면에서 이메일 입력이 끝나면 호출. 학교명을 미리 보여주고 관리자 코드칸 노출을 정한다. */
+export async function lookupSchool(email) { ... }   // → { supported, school_name? }
 ```
-요청   { "email": "student1@chosun.ac.kr" }
-응답   { "school_name": "조선대학교", "supported": true }
-       { "supported": false }                        ← 미등록 도메인. 가입 버튼 비활성화
-```
-
-**`POST /api/auth/signup`**
-
-```
-요청   { "email": "...", "password": "...", "role": "student" }
-       { "email": "...", "password": "...", "role": "admin", "admin_code": "CSU-ADM-01" }
-응답   201  { "user_id": 12 }   + Set-Cookie (가입 후 바로 로그인 상태)
-오류   400 UNSUPPORTED_DOMAIN   미등록 이메일 도메인
-       400 EMAIL_TAKEN          이미 가입된 이메일
-       400 INVALID_ADMIN_CODE   관리자 코드 불일치
+```python
+# app/api/routes/auth.py
+@router.post("/auth/school-lookup")
+def lookup_school(body: SchoolLookupIn) -> SchoolLookupOut:
+    school = db.find_school_by_email(body.email)     # schools 조회
+    return SchoolLookupOut(supported=school is not None,
+                           school_name=school["name"] if school else None)
 ```
 
-학교는 **이메일 도메인으로 서버가 정한다.** 요청에 `school_id`가 없는 이유다.
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `email` | `str` | `@` 뒤를 잘라 `schools.email_domain`과 대조 |
 
-**`POST /api/auth/login`**
+**하는 일** — 오타로 엉뚱한 학교에 민원이 올라가는 사고를 가입 단계에서 막는다.
+학교 선택 드롭다운이 없는 이유가 이것이다. **인증 불필요** (가입 전에 부른다).
 
+**반환** `{ "supported": true, "school_name": "조선대학교" }` / `{ "supported": false }`
+
+---
+
+#### 2. `signup` — 가입
+
+```js
+export async function signup(email, password, role, adminCode = null) { ... }   // → { user_id }
 ```
-요청   { "email": "...", "password": "..." }
-응답   200  Me  + Set-Cookie
-오류   401 INVALID_CREDENTIALS   (이메일이 없는 건지 비밀번호가 틀린 건지 구분하지 않는다)
-```
-
-**`GET /api/auth/me`** → `Me` · 미로그인이면 401
-앱을 열 때 가장 먼저 호출해 로그인 상태와 역할을 판정한다. 역할에 따라 화면이 갈린다.
-
-**`PATCH /api/auth/password`**
-
-```
-요청   { "current_password": "...", "new_password": "..." }
-응답   204
-오류   401 WRONG_PASSWORD
-```
-
-**`DELETE /api/auth/me`**
-
-```
-요청   { "password": "..." }
-응답   204  + 세션 삭제
+```python
+@router.post("/auth/signup", status_code=201)
+def signup(body: SignupIn, response: Response) -> SignupOut:
+    school = db.find_school_by_email(body.email)        # 없으면 400 UNSUPPORTED_DOMAIN
+    if body.role == "admin":
+        db.verify_admin_code(school["id"], body.admin_code)   # 불일치면 400
+    user_id = db.create_user(school["id"], body.email, body.password, body.role)
+    response.set_cookie(...)                            # 가입 즉시 로그인
 ```
 
-작성한 민원은 **남고 소유자만 지워진다**(`submitted_by_user_id = NULL`).
-게시판이 이미 익명이라 표시에 영향이 없고, 학교의 기록은 보존되어야 하기 때문이다.
-프론트는 탈퇴 확인 문구에 이 점을 적는다.
+| 파라미터 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `email` | `str` | ✓ | 도메인으로 학교가 정해진다 |
+| `password` | `str` | ✓ | 서버에서 해시. 평문 저장 안 함 |
+| `role` | `'student' \| 'admin'` | ✓ | |
+| `admin_code` | `str` | `role='admin'`일 때만 | `admin_codes.code`와 대조 |
 
-### 2.2 민원 작성
+**건드리는 것** — `schools` 조회 → `admin_codes` 조회 → `users` INSERT → 세션 생성
 
-**`POST /api/drafts`** → `{ "draft_key": "3f9a..." }`
+**하는 일** — `school_id`를 **요청에서 받지 않는다.** 이메일 도메인으로 서버가 정한다.
+같은 학교 이메일이라는 사실만으로 관리자가 되지는 못한다 — 코드가 따로 필요하다.
 
-"새 민원 작성"을 누를 때 한 번 호출한다. 이후 대화는 이 키로 묶인다.
+**오류** `400 UNSUPPORTED_DOMAIN` · `400 EMAIL_TAKEN` · `400 INVALID_ADMIN_CODE`
 
-**`POST /api/drafts/{draft_key}/messages`** — 이 서비스의 핵심이다.
+---
 
+#### 3. `login` / 4. `logout` / 5. `getMe`
+
+```js
+export async function login(email, password) { ... }   // → Me
+export async function logout() { ... }                  // → void
+export async function getMe() { ... }                   // → Me | null (401이면 null)
 ```
-요청   { "message": "3층 화장실 물이 안 내려가요" }
+```python
+@router.post("/auth/login")
+def login(body: LoginIn, response: Response) -> Me:
+    user = db.authenticate_user(body.email, body.password)   # None이면 401
+    response.set_cookie(...)                                  # user_id·school_id·role을 세션에
 
-응답 A — 정보가 부족해 AI가 되묻는 경우
-{
-  "is_complete": false,
-  "follow_up_question": "어느 건물 3층인지 알려주시겠어요?"
-}
+@router.post("/auth/logout", status_code=204)
+def logout(response: Response) -> None: ...                   # Redis 세션 삭제 + 쿠키 만료
 
-응답 B — 확정안이 나온 경우
-{
-  "is_complete": true,
-  "preview": {
-    "category": "위생 / 배관",
-    "location": "본관 3층 남자화장실",
-    "refined_title": "본관 3층 화장실 배수 불량 조치 요청",
-    "refined_body": "현상: ...\n영향: ...\n요청: ..."
-  }
-}
-
-오류   502 BEDROCK_ERROR   모델 호출 실패. 대화는 이미 저장돼 있으니 다시 보내면 된다
-```
-
-**프론트가 `is_complete`로 화면을 가른다.** `false`면 질문을 말풍선으로 띄우고 입력창을 유지한다.
-`true`면 미리보기 카드와 "정식 접수" 버튼을 띄운다.
-미리보기 상태에서도 사용자가 다시 메시지를 보내면(`"위치를 4층으로 바꿔줘"`) 같은 엔드포인트를
-그대로 호출한다 — **수정 전용 API가 따로 없다.** 대화가 곧 수정 수단이다.
-
-**`GET /api/drafts/{draft_key}/conversation`** → `ConversationTurn[]`
-
-새로고침 복구용. 대화는 매 턴 DB에 저장되므로 화면을 다시 그릴 때 이걸 읽는다.
-**프론트는 대화 배열을 자기 상태에만 들고 있지 않는다.**
-
-**`POST /api/drafts/{draft_key}/submit`**
-
-```
-요청   {}     ← 확정안은 서버가 그 draft의 마지막 결과에서 가져온다
-응답   201  { "complaint_id": 87, "next_draft_key": "8b2c..." }
-오류   409 DRAFT_NOT_COMPLETE   아직 확정안이 없다 (되묻는 중)
+@router.get("/auth/me")
+def get_me(user = Depends(current_user)) -> Me: ...           # 미로그인 401
 ```
 
-> **본문에 `refined`를 실어 보내지 않는 이유**: 프론트가 보낸 값을 그대로 저장하면
-> 화면에서 값을 바꿔 보낼 수 있게 된다. AI가 확정한 것과 접수된 것이 달라질 여지를 없앤다.
->
-> **`next_draft_key`를 함께 주는 이유**: 접수가 끝나면 이전 draft는 닫힌다.
-> 다음 민원이 앞 대화와 섞이지 않도록 서버가 새 키를 바로 발급한다.
-> 프론트는 이걸 받아 그대로 교체하면 되고, 별도로 `POST /api/drafts`를 다시 부르지 않는다.
+**세션에 담기는 것** — `user_id` · `school_id` · `role`.
+**이 셋이 이후 모든 요청의 권한과 격리 범위를 정한다.** 프론트는 이걸 보내지 않는다.
 
-### 2.3 게시판
+**`getMe`가 특별한 이유** — 앱을 열 때 **가장 먼저** 부른다. 반환된 `role`로 학생 화면과
+관리자 화면이 갈린다. 시안의 전환 버튼(`switchView`)은 만들지 않는다.
 
-**`GET /api/complaints?status=처리중`** → `Complaint[]` (`comments`는 빈 배열)
+**오류** `401 INVALID_CREDENTIALS` — 이메일이 없는 건지 비밀번호가 틀린 건지 구분하지 않는다(계정 존재 여부 노출 방지)
 
-- `status` 생략 시 **철회를 뺀 전체**
-- 최신순
-- 철회된 민원은 어떤 조건에서도 나오지 않는다
+---
 
-**`GET /api/complaints/{id}`** → `Complaint` (`comments` 채워짐)
+#### 6. `changePassword` / 7. `deleteAccount`
 
-**학생이 이걸 불러도 상태는 바뀌지 않는다.** 확인 전환은 관리자 전용 엔드포인트에서만 일어난다.
-
-**`GET /api/complaints/{id}/conversation`** → `ConversationTurn[]` — "원문 보기" 토글
-
-**`POST /api/complaints/{id}/withdraw`**
-
+```js
+export async function changePassword(currentPassword, newPassword) { ... }   // → void
+export async function deleteAccount(password) { ... }                         // → void
 ```
-요청   { "password": "..." }
-응답   204
-오류   401 WRONG_PASSWORD
-       403 NOT_OWNER        내 민원이 아님
+```python
+@router.patch("/auth/password", status_code=204)
+def change_password(body: ChangePasswordIn, user = Depends(current_user)) -> None:
+    db.verify_password(user.id, body.current_password)   # 틀리면 401 WRONG_PASSWORD
+    db.change_password(user.id, body.new_password)
+
+@router.delete("/auth/me", status_code=204)
+def delete_account(body: DeleteAccountIn, user = Depends(current_user)) -> None:
+    db.verify_password(user.id, body.password)
+    db.delete_user(user.id)        # users DELETE → complaints.submitted_by_user_id = NULL
 ```
 
-프론트는 `is_mine`이 `true`일 때만 철회 버튼을 그린다. 서버는 그것과 무관하게 다시 검사한다.
-**화면에서 감추는 것은 편의이고, 막는 것은 서버다.**
+**탈퇴가 건드리는 것** — `users` 행 삭제, `complaints.submitted_by_user_id`가 `NULL`로.
+**민원 자체는 남는다.** 학교의 공공 기록이고 게시판은 이미 익명이라 표시에 영향이 없다.
+`complaint_conversations`·`complaint_comments`는 민원에 딸려 있으므로 함께 남는다.
 
-### 2.4 관리자
+프론트는 탈퇴 확인 문구에 "작성한 민원은 익명으로 남습니다"를 적는다.
 
-**`GET /api/admin/stats`**
+---
+
+### 2.2 민원 작성 — `api/draft.js` ↔ `routes/draft.py`
+
+---
+
+#### 8. `startDraft` — 작성 시작
+
+```js
+export async function startDraft() { ... }   // → { draft_key }
+```
+```python
+@router.post("/drafts", status_code=201)
+def create_draft(user = Depends(current_user)) -> DraftOut:
+    return DraftOut(draft_key=str(uuid4()))   # DB에 아무것도 안 쓴다
+```
+
+**"새 민원 작성"을 누를 때 한 번.** 이 키가 이후 대화 전체를 묶는다.
+행은 첫 메시지에서 생기므로 여기서는 키만 발급한다.
+
+---
+
+#### 9. `sendMessage` — **이 서비스의 핵심**
+
+```js
+/** 학생 메시지를 보내고 AI 응답을 받는다. 되묻는 중이면 is_complete=false. */
+export async function sendMessage(draftKey, message) { ... }   // → RefineResult
+```
+```python
+@router.post("/drafts/{draft_key}/messages")
+def send_message(draft_key: str, body: SendMessageIn,
+                 user = Depends(current_user)) -> RefineResultOut:
+    return service.send_message(draft_key, body.message)
+
+# app/services/complaint_service.py
+def send_message(self, draft_key: str, student_message: str) -> dict:
+    self.db.add_conversation_turn(draft_key, 'student', student_message)   # ① 학생 발화 저장
+    conversation = self.db.get_conversation(draft_key)                     # ② 왕복 전체 로드
+    result = self.bedrock.refine_complaint(conversation)                   # ③ 도구 호출
+    ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
+                  else result["follow_up_question"])
+    self.db.add_conversation_turn(draft_key, 'assistant', ai_message)      # ④ AI 발화 저장
+    return result
+```
+
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `draft_key` | `str` (경로) | `startDraft`가 준 키 |
+| `message` | `str` (본문) | 학생이 친 구어체 문장 |
+
+**건드리는 것** — `complaint_conversations` INSERT **2행**(학생·AI). Bedrock 호출 1회.
+**`complaints`는 건드리지 않는다** — 아직 접수 전이다.
+
+**하는 일** — Bedrock이 도구(`classify_and_refine_complaint`)를 호출할 만큼 정보가 모였는지
+스스로 판단한다. 부족하면 도구를 안 부르고 일반 텍스트로 되묻는다.
+
+```jsonc
+// 되묻는 경우
+{ "is_complete": false, "follow_up_question": "어느 건물 3층인지 알려주시겠어요?" }
+
+// 확정안이 나온 경우
+{ "is_complete": true,
+  "preview": { "category": "위생 / 배관", "location": "본관 3층 남자화장실",
+               "refined_title": "본관 3층 화장실 배수 불량 조치 요청",
+               "refined_body": "현상: ...\n영향: ...\n요청: ..." } }
+```
+
+**프론트가 `is_complete`로 화면을 가른다.** `false`면 질문을 말풍선으로 띄우고 입력창 유지,
+`true`면 미리보기 카드 + "정식 접수" 버튼.
+
+**미리보기가 뜬 뒤에도 같은 함수를 그대로 부른다.** "위치를 4층으로 바꿔줘"도 메시지다 —
+**수정 전용 API가 없다.** 대화가 곧 수정 수단이고, 새 결과가 이전 미리보기를 덮는다.
+
+**오류** `502 BEDROCK_ERROR` — 학생 발화는 ①에서 이미 저장됐으므로 다시 보내면 이어진다
+
+---
+
+#### 10. `getDraftConversation` — 새로고침 복구
+
+```js
+export async function getDraftConversation(draftKey) { ... }   // → ConversationTurn[]
+```
+```python
+@router.get("/drafts/{draft_key}/conversation")
+def get_draft_conversation(draft_key: str, user = Depends(current_user)) -> list[TurnOut]:
+    return db.get_conversation(draft_key)      # complaint_id IS NULL, 시간순
+```
+
+**프론트는 대화 배열을 자기 상태에만 들고 있지 않는다.** 화면을 다시 그릴 때 이걸 읽는다.
+매 턴 DB에 저장되므로 새로고침해도 대화가 살아 있다.
+
+---
+
+#### 11. `submitDraft` — 정식 접수
+
+```js
+export async function submitDraft(draftKey) { ... }   // → { complaint_id, next_draft_key }
+```
+```python
+@router.post("/drafts/{draft_key}/submit", status_code=201)
+def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
+    refined = service.last_refined(draft_key)     # 없으면 409 DRAFT_NOT_COMPLETE
+    cid = service.submit(user.school_id, user.id, draft_key, refined)
+    return SubmitOut(complaint_id=cid, next_draft_key=str(uuid4()))
+
+# service.submit → db.create_complaint
+#   ① complaints INSERT (status='미확인', confirmed_at=NULL)
+#   ② complaint_conversations UPDATE — 그 draft_key의 모든 행에 complaint_id 채움
+```
+
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `draft_key` | `str` (경로) | 본문은 비어 있다 |
+
+**본문에 확정안을 싣지 않는 이유** — 프론트가 보낸 값을 그대로 저장하면 화면에서 값을 바꿔
+보낼 수 있다. **AI가 확정한 것과 접수된 것이 달라질 여지를 없앤다.**
+서버가 그 draft의 마지막 결과를 쓴다.
+
+**`next_draft_key`를 함께 주는 이유** — 접수되면 그 draft는 닫힌다. 다음 민원이 앞 대화와
+섞이지 않도록 서버가 새 키를 바로 발급한다. 프론트는 받아서 교체만 하면 되고
+`startDraft()`를 다시 부르지 않는다.
+
+**오류** `409 DRAFT_NOT_COMPLETE` — 아직 되묻는 중이라 확정안이 없다
+
+---
+
+### 2.3 게시판 — `api/board.js` ↔ `routes/board.py`
+
+---
+
+#### 12. `listComplaints` / 13. `getComplaint` / 14. `getComplaintConversation`
+
+```js
+export async function listComplaints(status = null) { ... }        // → Complaint[]
+export async function getComplaint(id) { ... }                     // → Complaint
+export async function getComplaintConversation(id) { ... }         // → ConversationTurn[]
+```
+```python
+@router.get("/complaints")
+def list_complaints(status: Status | None = None,
+                    user = Depends(current_user)) -> list[ComplaintOut]:
+    return db.list_complaints(user.school_id, status)   # 철회 제외, 최신순
+
+@router.get("/complaints/{cid}")
+def get_complaint(cid: int, user = Depends(current_user)) -> ComplaintOut:
+    c = db.get_complaint(cid, user.school_id)           # None이면 404
+    c["comments"] = db.get_comments(cid)
+    c["is_mine"] = (c.pop("submitted_by_user_id") == user.id)   # ★ 여기서 계산하고 원본은 버린다
+    return c
+
+@router.get("/complaints/{cid}/conversation")
+def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[TurnOut]:
+    db.get_complaint(cid, user.school_id)               # 소유 학교 확인용, 없으면 404
+    return db.get_conversation_by_complaint(cid)
+```
+
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `status` | `Status?` (쿼리) | 생략하면 **철회를 뺀 전체** |
+| `id` | `int` (경로) | 다른 학교 것이면 404 |
+
+**`is_mine` 계산이 중요한 곳** — `submitted_by_user_id`를 세션과 대조해 불린으로 바꾸고
+**원본 id는 응답에서 지운다.** 익명성이 여기서 지켜진다. 프론트는 이 값으로 철회 버튼만 그린다.
+
+**목록에서 `comments`는 빈 배열이다.** 상세에서만 채운다.
+
+**학생이 상세를 열어도 상태가 안 바뀐다.** 확인 전환은 관리자 전용(#17)에서만 일어난다.
+
+---
+
+#### 15. `withdrawComplaint` — 철회
+
+```js
+export async function withdrawComplaint(id, password) { ... }   // → void
+```
+```python
+@router.post("/complaints/{cid}/withdraw", status_code=204)
+def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None:
+    service.withdraw(cid, user.id, body.password)
+    #   ① db.verify_password(user_id, password)   틀리면 401
+    #   ② complaints UPDATE status='철회' WHERE id=? AND submitted_by_user_id=?
+    #      0행이면 403 NOT_OWNER
+```
+
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `id` | `int` (경로) | |
+| `password` | `str` (본문) | 본인 확인. 잘못 누르는 사고 방지 |
+
+**하드 삭제가 아니라 상태 전환이다.** 레코드는 남고 조회에서만 빠진다.
+게시판·관리자 목록 양쪽에서 즉시 사라진다.
+
+**어느 상태에서든 된다.** 관리자가 이미 처리중·해결완료로 바꿨어도 학생은 철회할 수 있다.
+
+프론트는 `is_mine === true`일 때만 버튼을 그린다. **서버는 그것과 무관하게 다시 검사한다.**
+
+---
+
+### 2.4 관리자 — `api/admin.js` ↔ `routes/admin.py`
+
+이 절의 모든 함수는 `role == 'admin'`을 통과해야 한다. 학생이 부르면 **403**.
+
+---
+
+#### 16. `getStats` — 통계 카드
+
+```js
+export async function getStats() { ... }   // → { total, by_status }
+```
+```python
+@router.get("/admin/stats")
+def get_stats(user = Depends(require_admin)) -> StatsOut:
+    return db.get_complaint_stats(user.school_id)   # GROUP BY status, 철회 제외
+```
 
 ```json
 { "total": 42, "by_status": { "미확인": 5, "확인": 3, "처리중": 8,
                               "해결완료": 20, "보류": 4, "거절": 2 } }
 ```
 
-**`POST /api/admin/complaints/{id}/open`** → `Complaint`
+**목록 길이로 대신할 수 없어서 따로 있다.** 상태별 집계라 전체를 받아 세지 않으려면 필요하다.
+학생 게시판의 건수는 `listComplaints()` 결과 길이를 쓰므로 별도 API가 없다.
 
-**목록에서 행을 클릭하면 이걸 부른다.** 상세 데이터를 돌려주면서
-`미확인`이면 `확인`으로 **자동 전환한다.** 이미 확인 이후면 아무 일도 일어나지 않는다.
+---
 
-> `GET`이 아니라 `POST`인 이유: 상태를 바꾸기 때문이다.
-> 조회처럼 생겼지만 부작용이 있어서 `GET`으로 두면 브라우저·프록시가 미리 불러
-> 열지도 않은 민원이 확인 처리될 수 있다.
+#### 17. `openComplaint` — **상세 열람 + 확인 자동전환**
 
-**결정 버튼 네 개**
-
-| 프론트 | 엔드포인트 | 요청 | 전이 |
-|---|---|---|---|
-| `acceptComplaint(id)` | `.../accept` | `{}` | 확인 → 처리중 |
-| `resolveComplaint(id)` | `.../resolve` | `{}` | 처리중 → 해결완료 |
-| `holdComplaint(id, reason)` | `.../hold` | `{ "reason": "..." }` | 확인 → 보류 |
-| `rejectComplaint(id)` | `.../reject` | `{}` | 확인 → 거절 |
-
-전부 성공 시 `200 Complaint`(갱신된 상태). 오류는 아래.
-
+```js
+/** 목록 행을 클릭할 때 부른다. 상세를 받아오면서 미확인이면 확인으로 바꾼다. */
+export async function openComplaint(id) { ... }   // → Complaint
 ```
-409 INVALID_TRANSITION    현재 상태에서 갈 수 없는 곳
-                          예: 미확인에 accept, 확인 상태에 resolve
-422 HOLD_REASON_REQUIRED  보류인데 reason이 비었다
+```python
+@router.post("/admin/complaints/{cid}/open")
+def open_complaint(cid: int, user = Depends(require_admin)) -> ComplaintOut:
+    service.open_detail(cid, user.school_id)
+    #   db.confirm_complaint → UPDATE complaints
+    #     SET status='확인', confirmed_at=CURRENT_TIMESTAMP
+    #     WHERE id=? AND school_id=? AND status='미확인'      ← 이 조건이 멱등성을 만든다
+    return get_complaint(cid, user)     # 갱신된 상세 + 코멘트
 ```
 
-**`POST /api/admin/complaints/{id}/comments`**
+**건드리는 것** — `complaints` UPDATE(조건부) · `complaint_comments` 조회
 
+**`WHERE status='미확인'`이 핵심이다.** 이미 확인 이후면 0행이 바뀌고 아무 일도 없다.
+여러 번 눌러도 안전하고, `confirmed_at`은 **처음 열람한 시각**으로 고정된다.
+
+> **`GET`이 아니라 `POST`인 이유** — 상태를 바꾸기 때문이다. 조회처럼 생겼지만 부작용이 있어서
+> `GET`으로 두면 브라우저 프리페치나 프록시 캐시가 **열지도 않은 민원을 확인 처리한다.**
+
+**확인 버튼은 존재하지 않는다.** 열람 자체가 확인 행위다.
+
+---
+
+#### 18~21. 결정 버튼 넷
+
+```js
+export async function acceptComplaint(id) { ... }          // 확인   → 처리중
+export async function resolveComplaint(id) { ... }         // 처리중 → 해결완료
+export async function holdComplaint(id, reason) { ... }    // 확인   → 보류 (사유 필수)
+export async function rejectComplaint(id) { ... }          // 확인   → 거절
 ```
-요청   { "content": "관리팀에 전달했습니다" }
-응답   201  Comment
+```python
+@router.post("/admin/complaints/{cid}/accept")
+def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut:
+    ok, msg = service.accept(cid, user.school_id)
+    #   UPDATE complaints SET status='처리중'
+    #   WHERE id=? AND school_id=? AND status='확인'     ← 0행이면 409
+
+@router.post("/admin/complaints/{cid}/resolve")     # ... AND status='처리중'
+@router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인'
+
+@router.post("/admin/complaints/{cid}/hold")
+def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
+    if not body.reason.strip():
+        raise Conflict("HOLD_REASON_REQUIRED", 422)
+    ok, msg = service.hold(cid, user.school_id, user.id, body.reason)
+    #   ① UPDATE complaints SET status='보류' WHERE ... AND status='확인'
+    #   ② complaint_comments INSERT (is_hold_reason=1)   ← 같은 트랜잭션
 ```
 
-**상태와 무관하게 언제든 가능하다.** 보류로 전환할 때만 사유가 필수일 뿐,
-코멘트 자체는 상시 추가되고 누적된다.
+| 함수 | 파라미터 | 전제 상태 | 결과 상태 | 추가로 건드리는 것 |
+|---|---|---|---|---|
+| `accept` | `id` | `확인` | `처리중` | — |
+| `resolve` | `id` | `처리중` | `해결완료` | — |
+| `hold` | `id`, `reason` | `확인` | `보류` | `complaint_comments` INSERT |
+| `reject` | `id` | `확인` | `거절` | — |
+
+**전부 `200 Complaint`(갱신된 상태)를 돌려준다.** 프론트는 응답으로 화면을 다시 그린다.
+
+**`WHERE status=<전제>`가 전이 검증이다.** 별도 조회 후 판정하지 않는다 —
+동시에 두 관리자가 눌러도 하나만 성공한다.
+
+**`hold`는 상태 변경과 코멘트 INSERT가 한 트랜잭션이다.** 사유 없는 보류가 남지 않게.
+
+**오류** `409 INVALID_TRANSITION`(전제 상태 불일치) · `422 HOLD_REASON_REQUIRED`(사유 공백)
+
+---
+
+#### 22. `addComment` — 코멘트 추가
+
+```js
+export async function addComment(id, content) { ... }   // → Comment
+```
+```python
+@router.post("/admin/complaints/{cid}/comments", status_code=201)
+def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> CommentOut:
+    db.get_complaint(cid, user.school_id)          # 학교 확인, 없으면 404
+    return db.add_comment(cid, user.id, body.content)   # is_hold_reason=0
+```
+
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `id` | `int` (경로) | |
+| `content` | `str` (본문) | 빈 문자열이면 400 |
+
+**상태와 무관하게 언제든 된다.** 보류로 전환할 때만 사유가 필수일 뿐,
+코멘트 자체는 상시 추가되고 **누적**된다. 덮어쓰기가 아니다.
+
+**작성자는 응답에 넣지 않는다.** `author_user_id`는 DB에만 있고 화면에는 "관리자"로만 나온다.
+
+`is_hold_reason`으로 보류 사유와 일반 코멘트를 구분한다 — 프론트가 보류 사유를 강조 표시할 때 쓴다.
 
 ---
 
@@ -433,13 +673,67 @@ src/api/
 └─ admin.js       7개
 ```
 
-`client.js`가 하는 일
+```js
+// src/api/client.js — 여기만 fetch를 안다
+const BASE = '/api';
 
-- 모든 요청에 `credentials: 'include'`와 CSRF 헤더를 붙인다
-- 응답이 2xx가 아니면 `{ code, message }`를 담은 예외를 던진다 — 호출하는 쪽이 `try/catch` 하나로 처리
-- **401이면 로그인 화면으로 보낸다.** 각 함수가 따로 처리하지 않는다
+export class ApiError extends Error {
+  constructor(status, code, message) { super(message); this.status = status; this.code = code; }
+}
+
+/**
+ * @param {'GET'|'POST'|'PATCH'|'DELETE'} method
+ * @param {string} path            '/complaints/12' 처럼 BASE 뒤 경로
+ * @param {object} [body]          있으면 JSON으로 직렬화
+ * @param {object} [query]         있으면 쿼리스트링으로
+ * @returns {Promise<any>}         204면 undefined
+ * @throws  {ApiError}             2xx가 아니면 전부 여기로
+ */
+export async function request(method, path, { body, query } = {}) {
+  const url = BASE + path + (query ? '?' + new URLSearchParams(query) : '');
+  const res = await fetch(url, {
+    method,
+    credentials: 'include',                       // 쿠키 세션 — 모든 요청 필수
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'fetch',                // CSRF 대비
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (res.status === 401) { redirectToLogin(); throw new ApiError(401, 'UNAUTHENTICATED', ''); }
+  if (res.status === 204) return undefined;
+
+  const data = await res.json();
+  if (!res.ok) throw new ApiError(res.status, data.error.code, data.error.message);
+  return data;
+}
+```
+
+**`client.js`가 지는 책임 세 가지**
+
+| | 왜 여기서 하나 |
+|---|---|
+| `credentials`·CSRF 헤더 부착 | 22개 함수가 각자 붙이면 하나는 반드시 빠뜨린다 |
+| 오류를 `ApiError`로 던짐 | 호출하는 쪽이 `try/catch` 하나로 끝난다. 매번 `res.ok`를 보지 않는다 |
+| **401이면 로그인 화면으로** | 세션 만료는 어느 함수에서든 나므로 한 곳에서 처리한다 |
 
 컴포넌트에서 `fetch`를 직접 부르지 않는다. 엔드포인트가 바뀌면 `src/api/` 안에서 끝나야 한다.
+
+**도메인 모듈은 이 위에 얇게 얹는다.**
+
+```js
+// src/api/admin.js
+import { request } from './client.js';
+
+export const getStats           = ()             => request('GET',  '/admin/stats');
+export const openComplaint      = (id)           => request('POST', `/admin/complaints/${id}/open`);
+export const acceptComplaint    = (id)           => request('POST', `/admin/complaints/${id}/accept`);
+export const resolveComplaint   = (id)           => request('POST', `/admin/complaints/${id}/resolve`);
+export const rejectComplaint    = (id)           => request('POST', `/admin/complaints/${id}/reject`);
+export const holdComplaint      = (id, reason)   => request('POST', `/admin/complaints/${id}/hold`,     { body: { reason } });
+export const addComment         = (id, content)  => request('POST', `/admin/complaints/${id}/comments`, { body: { content } });
+```
 
 ---
 
