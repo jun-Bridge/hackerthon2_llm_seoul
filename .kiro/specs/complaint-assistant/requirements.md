@@ -388,10 +388,10 @@ SET NULL이면 세션만 사라지고 대화는 `complaint_id`에 매달려 남�
 
 | 키 | 내용 | 사라지는 때 |
 |---|---|---|
-| `sess:{session_id}` | 로그인 세션 — `user_id`·`school_id`·`role` | 로그아웃, TTL 만료 |
-| `turn:{session_id}:running` | 진행 중인 턴 표시 (`SET NX`) | 턴 종료 (실패해도) |
-| `compact:{session_id}` | 압축 진행 표시 (`SET NX`) | 압축 종료 (실패해도) |
-| `sess_state:{session_id}` | 현재 단계·반복 횟수 (칩 캐시) | TTL |
+| `sess:{login_sid}` | 로그인 세션 — `user_id`·`school_id`·`role` | 로그아웃, TTL 만료 |
+| `turn:{sid}:running` | 진행 중인 턴 표시 (`SET NX`) | 턴 종료 (실패해도) |
+| `compact:{sid}` | 압축 진행 표시 (`SET NX`) | 압축 종료 (실패해도) |
+| `sess_state:{sid}` | 현재 단계·반복 횟수 (칩 캐시) | TTL |
 
 **로그인 세션이 Redis에 있어서 새로고침해도 로그인이 유지된다.** 브라우저에는 HttpOnly
 쿠키로 세션 id만 있고, 어느 워커가 받든 같은 Redis를 보므로 결과가 같다.
@@ -399,7 +399,7 @@ SET NULL이면 세션만 사라지고 대화는 `complaint_id`에 매달려 남�
 **소유권은 Redis가 아니라 `chat_sessions.user_id`가 쥔다.** 세션이 "과거 대화" 목록에
 남아야 하므로 어차피 영속 행이고, 행이 있으면 소유자도 거기 있는 게 맞다.
 
-**`turn:{session_id}:running`은 턴 중복을 막는다.** 응답이 오기 전에 또 보내면 Bedrock 호출이 둘 다
+**`turn:{sid}:running`은 턴 중복을 막는다.** 응답이 오기 전에 또 보내면 Bedrock 호출이 둘 다
 돌고 대화 순서가 꼬인다. `SET NX`로 세워야 한다 — 워커가 여럿이라 "있는지 보고 세우기"로 하면
 두 워커가 동시에 통과한다.
 

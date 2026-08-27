@@ -68,7 +68,7 @@ app/
 │
 ├─ session/                ★ Redis가 사는 곳
 │  ├─ client.py            연결
-│  ├─ login_session.py     sess:{id}
+│  ├─ login_session.py     sess:{login_sid}
 │  └─ session_state.py     turn:{sid}:running · compact:{sid} · step
 │
 ├─ llm/                    ★ Bedrock이 사는 곳
@@ -785,7 +785,7 @@ LLM 응답 도착
 
 | 시점 | PostgreSQL | Redis |
 |---|---|---|
-| **접속 (앱 진입)** | — | `sess:{id}` 조회 → 로그인 여부 |
+| **접속 (앱 진입)** | — | `sess:{login_sid}` 조회 → 로그인 여부 |
 | **세션 목록 열기** | `chat_sessions` 조회 | — |
 | **세션 하나 열기** | 대화 기록 + 마지막 턴의 `choices`(정본) | `sess_state:{sid}` (있으면 빠른 경로) |
 | **새로고침** | 위와 동일 (전부 다시 읽는다) | 동일 |
@@ -816,7 +816,7 @@ Redis는 그것을 다시 읽지 않으려는 캐시일 뿐이다.
 
 | 키 | TTL | 갱신 |
 |---|---|---|
-| `sess:{session_id}` | 로그인 유지 시간 | **요청마다 연장** (sliding) |
+| `sess:{login_sid}` | 로그인 유지 시간 | **요청마다 연장** (sliding) |
 | `turn:{sid}:running` | 짧게 (한 턴 최대 시간) | — |
 | `compact:{sid}` | 짧게 (압축 1회 시간) | — |
 | `sess_state:{sid}` | 짧게 (캐시일 뿐, 정본은 DB) | 턴마다 갱신 |
@@ -1115,16 +1115,20 @@ def signup(email, password, admin_code):
 
 ## 11. 계약과의 연결
 
-`api-contract.md`의 24개 함수가 서비스의 어디로 가는지.
+`api-contract.md`의 26개 함수가 서비스의 어디로 가는지.
 
 | 계약 | 서비스 |
 |---|---|
 | #1 `listSchools` | `school_service.list_all` — 얇지만 계층을 건너뛰지 않는다 |
 | #2~7 인증 | `auth_service` |
 | #7-1 `verifyPassword` | `auth_service.verify_password` |
-| #8~11 대화 세션 | `session_service` (접수는 `POST /chat-sessions/{sid}/submit`) |
+| #8 · #8-1 · #8-2 세션 | `session_service` |
+| #9~11 대화·접수 | `session_service` (+ `llm`) |
 | #12~15 게시판 | `complaint_service` |
-| #16~23 관리자 | `complaint_service` (+ `bedrock_log_repo`) |
+| #16~23 관리자 | `complaint_service` |
+
+**`bedrock_logs` 적재는 `session_service`가 한다.** `llm`이 결과에 담아 돌려준 `Usage`를
+서비스가 `bedrock_log_repo`로 넘긴다 — `llm`은 `repo`를 부르지 않는다(§2).
 
 **단순 조회여도 서비스를 거친다.** 위임 한 줄이 아깝다고 §2의 계층 규칙에 예외를 만들면,
 "이건 간단하니까"가 쌓여 규칙이 무너진다. 예외 없는 규칙이라야 테스트로 강제할 수 있다.

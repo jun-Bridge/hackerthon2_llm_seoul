@@ -225,7 +225,7 @@ if __name__ == "__main__":
 - [ ] 역할이 관리자면 코드 입력 필드가 나타남
 - [ ] 이메일 도메인이 시드된 학교와 매칭 안 되면 "지원하지 않는 학교 이메일입니다" 에러
 - [ ] 관리자 코드가 불일치하면 가입 차단
-- [ ] 로그인 성공 시 `st.session_state`에 `logged_in`, `user_id`, `school_id`, `role` 저장
+- [ ] 로그인 성공 시 Redis에 세션을 만들고(`user_id`·`school_id`·`role`) HttpOnly 쿠키로 세션 id를 내려준다
 - [ ] 로그아웃 버튼으로 세션 초기화
 
 **Files to modify**:
