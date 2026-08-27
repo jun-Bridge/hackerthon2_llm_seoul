@@ -10,6 +10,9 @@ Postgres에 **통째로 덧씌운다.** 부분 병합 없음 — 작업본이 �
 diff를 사용자에게 보인 뒤 **적용**을 눌러야 작업본에 반영된다.
 
 구현 예정
+- `template.py` — **민원서 양식.** 세션 생성 시 이 템플릿이 깔린 문서를 만든다.
+  필수 섹션 목록도 여기가 정본
+- `completeness.py` — 필수 섹션이 비어 있는지 검사. LLM이 무엇을 되물어야 하는지의 근거
 - `core.py` — 줄 CRUD. 조회·교체·삽입·삭제·순서 유지. Redis 작업본에 대해 동작
 - `store.py` — Redis 복원(없으면 Postgres에서 적재) · dirty 표시 · Postgres 플러시
 - `proposal.py` — 제안 버퍼 적재, 제안 적용 결과 계산, TTL 만료 처리
