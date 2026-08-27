@@ -196,7 +196,7 @@ schools (학교)
          │ 1                                 (모든 조회는 이 school_id로 스코프)
          │
          ├──< complaint_conversations (학생-AI 대화, N)   [complaint_id FK, ON DELETE CASCADE]
-         │      (접수 전에는 complaint_id가 NULL, draft_key로만 묶여 있음)
+         │      (접수 전에는 complaint_id가 NULL, chat_session_id로만 묶여 있음)
          │
          └──< complaint_comments (관리자 코멘트, N)        [complaint_id FK, ON DELETE CASCADE]
                 (author_user_id도 FK지만 익명 게시판 표시에는 "관리자"로만 뭉뚱그려짐)
@@ -259,17 +259,39 @@ CREATE TABLE complaints (
 );
 
 -- 학생-AI 대화 왕복 기록. 접수 전(정제 중)과 접수 후 모두 여기 남는다.
+-- 대화 세션. "과거 대화" 목록의 한 줄이 이것이다.
+CREATE TABLE chat_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    school_id INTEGER NOT NULL,        -- users에서 유도 가능하지만 접수 시 조인을 없애려 복제
+    title VARCHAR(255),                -- 압축이 갱신한다. NULL이면 화면에 "새 대화"
+    is_manual_title BOOLEAN NOT NULL DEFAULT FALSE,
+    context TEXT,                      -- 세션 주제 (압축된 맥락)
+    compacted_upto INTEGER,            -- 메시지 id. 이 id 이하는 context에 녹아 있다
+    category VARCHAR(32),
+    complaint_id INTEGER,              -- 접수되면 연결. 차는 순간 읽기 전용
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE,
+    FOREIGN KEY (school_id)    REFERENCES schools(id)    ON DELETE CASCADE,
+    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_sessions_user ON chat_sessions(user_id, updated_at DESC);
+
 CREATE TABLE complaint_conversations (
     id SERIAL PRIMARY KEY,
-    complaint_id INTEGER,              -- 접수 전에는 NULL (아직 complaint row가 없음), 접수 시 연결
-    draft_key CHAR(36) NOT NULL,           -- 접수 전 임시 식별자 (세션 UUID). 접수되면 complaint_id로 대체
+    chat_session_id INTEGER,           -- 작성 중 조회는 이걸로
+    complaint_id INTEGER,              -- 접수되면 채워진다. 게시판·관리자 조회는 이걸로
     role VARCHAR(16) NOT NULL CHECK (role IN ('student','assistant')),
     content TEXT NOT NULL,
-    refined_json JSONB,                -- AI가 확정안을 낸 턴에만 채워진다. 되묻는 턴은 NULL
+    choices JSONB,                     -- 그 턴에 제시한 선택지(칩). 새로고침 복원용
+    refined_json JSONB,                -- AI가 확정안을 낸 턴에만. 되묻는 턴은 NULL
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
+    FOREIGN KEY (chat_session_id) REFERENCES chat_sessions(id) ON DELETE SET NULL,
+    FOREIGN KEY (complaint_id)    REFERENCES complaints(id)    ON DELETE CASCADE
 );
-CREATE INDEX idx_conv_draft ON complaint_conversations(draft_key);
+CREATE INDEX idx_conv_session   ON complaint_conversations(chat_session_id, id);
+CREATE INDEX idx_conv_complaint ON complaint_conversations(complaint_id, id);
 
 -- 관리자 코멘트. 보류 전환 시 1건 필수 생성, 그 외에는 언제든 추가 가능한 누적 로그.
 CREATE TABLE complaint_comments (
@@ -317,7 +339,15 @@ CREATE INDEX idx_bedrock_called ON bedrock_logs(called_at DESC);
 
 **익명성 설계 노트**: `submitted_by_user_id`는 어뷰징 대응(동일 학생 반복 신고 등)을 위해 내부적으로만 보관하고, 학생 게시판·관리자 화면 어디에도 조회/표시하지 않는다. 완전 삭제를 원하면 아예 컬럼을 없애도 되지만, 계정 탈퇴 시 CASCADE 정리를 고려해 `ON DELETE SET NULL`로 둔다.
 
-**대화 이력 설계 노트**: `raw_text` 단일 컬럼 대신 `complaint_conversations`로 왕복 전체를 남긴다. 접수 전에는 `draft_key`(클라이언트 세션에서 생성한 임시 UUID)로 묶어 관리하고, "정식 접수" 시점에 해당 `draft_key`의 모든 행에 `complaint_id`를 채워 넣는다. 관리자 상세 화면과 학생 게시판의 "원문 보기"는 이 테이블을 시간순으로 렌더링한다.
+**`chat_session_id`가 `SET NULL`인 이유**: 탈퇴하면 `chat_sessions`가 CASCADE로 지워지는데,
+`complaints`는 SET NULL이라 **민원은 남는다**(학교의 공공 기록이므로). 대화까지 세션을 따라
+지워지면 **접수된 민원은 남는데 근거 대화가 사라져** 관리자 상세의 "학생 원문"이 빈다.
+SET NULL이면 세션만 사라지고 대화는 `complaint_id`에 매달려 남는다.
+
+접수되면 두 FK가 **모두** 채워져 어느 쪽으로 찾아도 같은 행이 나온다.
+둘 다 NULL인 행(미접수인데 세션이 지워짐)은 정리 작업이 지운다.
+
+**대화 이력 설계 노트**: `raw_text` 단일 컬럼 대신 `complaint_conversations`로 왕복 전체를 남긴다. 접수 전에는 `chat_session_id`로 묶이고, "정식 접수" 시점에 그 세션의 모든 행에 `complaint_id`를 채워 넣는다. 관리자 상세 화면과 학생 게시판의 "원문 보기"는 이 테이블을 시간순으로 렌더링한다.
 
 **코멘트 설계 노트**: 단일 컬럼(예: `complaints.hold_reason`)이 아니라 별도 테이블로 분리한 이유는 US-4.7("언제든 코멘트 추가 가능, 누적")을 만족하려면 1:N 구조가 필요하기 때문이다. `is_hold_reason`은 "보류로 전환하면서 필수로 남긴 코멘트"와 "그 이후 자유롭게 추가한 코멘트"를 구분해, UI에서 보류 사유를 강조 표시할 때 쓴다. `confirmed_at`은 `미확인 → 확인` 자동 전환이 정확히 언제 일어났는지 감사(audit) 목적으로 남긴다.
 
@@ -340,14 +370,15 @@ CREATE INDEX idx_bedrock_called ON bedrock_logs(called_at DESC);
 | 키 | 내용 | 사라지는 때 |
 |---|---|---|
 | `sess:{session_id}` | 로그인 세션 — `user_id`·`school_id`·`role` | 로그아웃, TTL 만료 |
-| `draft:{draft_key}:owner` | 초안 소유자 `user_id` | 접수 완료, TTL 만료 |
-| `draft:{draft_key}:running` | 진행 중인 턴 표시 (`SET NX`) | 턴 종료 (실패해도) |
+| `turn:{session_id}:running` | 진행 중인 턴 표시 (`SET NX`) | 턴 종료 (실패해도) |
+| `compact:{session_id}` | 압축 진행 표시 (`SET NX`) | 압축 종료 (실패해도) |
+| `sess_state:{session_id}` | 현재 단계·반복 횟수 (칩 캐시) | TTL |
 
 **로그인 세션이 Redis에 있어서 새로고침해도 로그인이 유지된다.** 브라우저에는 HttpOnly
 쿠키로 세션 id만 있고, 어느 워커가 받든 같은 Redis를 보므로 결과가 같다.
 
-**`draft:{key}:owner`는 초안 소유권 검증용이다.** 이게 없으면 남의 `draft_key`를 아는 사람이
-그 대화를 읽고 이어 쓸 수 있다.
+**소유권은 Redis가 아니라 `chat_sessions.user_id`가 쥔다.** 세션이 "과거 대화" 목록에
+남아야 하므로 어차피 영속 행이고, 행이 있으면 소유자도 거기 있는 게 맞다.
 
 **`draft:{key}:running`은 턴 중복을 막는다.** 응답이 오기 전에 또 보내면 Bedrock 호출이 둘 다
 돌고 대화 순서가 꼬인다. `SET NX`로 세워야 한다 — 워커가 여럿이라 "있는지 보고 세우기"로 하면
@@ -393,7 +424,7 @@ CREATE INDEX idx_bedrock_called ON bedrock_logs(called_at DESC);
 - [ ] 학생이 답하면 지금까지의 대화 전체를 컨텍스트로 다시 Bedrock 호출
 - [ ] 충분한 정보가 모이면 도구 호출로 카테고리(고정 목록 중 하나)/위치/제목/본문을 확정한다
 - [ ] 확정된 결과가 미리보기 화면에 표시된다
-- [ ] "정식 접수" 전까지는 `complaints` 테이블에 저장되지 않는다 (대화는 `draft_key`로 임시 저장됨)
+- [ ] "정식 접수" 전까지는 `complaints` 테이블에 저장되지 않는다 (대화는 `chat_session_id`로만 묶여 있다)
 - [ ] 접수 후 관리자/학생 화면에서 질문-답변 전체 왕복을 시간순으로 볼 수 있다
 
 ### M3 — 학생 게시판 & 철회

@@ -113,7 +113,8 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 | `FORBIDDEN_ROLE` | 403 | 역할에 없는 API 호출 | 일어나면 안 되는 일. 화면 분기 버그 |
 | `NOT_OWNER` | 403 | 내 것이 아닌 초안·민원 | 목록 새로고침 |
 | `NOT_FOUND` | 404 | 없거나 볼 권한 없음 (철회 포함) | 목록으로 돌려보냄 |
-| `DRAFT_NOT_FOUND` | 404 | 초안 TTL 만료 | 새 초안 시작 |
+| `SESSION_CLOSED` | 409 | 이미 접수된 세션에 메시지 시도 | 읽기 전용이었어야 한다. 새 세션을 연다 |
+| `CONVERSATION_STUCK` | 409 | 같은 단계를 여러 번 맴돌았다 | "처음부터 다시" / "직접 채우기"를 제시 |
 | `DRAFT_NOT_COMPLETE` | 409 | 확정안 없이 접수 시도 | 접수 버튼을 감췄어야 한다 |
 | `TURN_IN_PROGRESS` | 409 | 이전 턴이 아직 진행 중 | 입력창을 잠갔어야 한다 |
 | `INVALID_TRANSITION` | 409 | 현재 상태에서 갈 수 없는 전이 | 상세를 다시 받아 버튼 재계산 |
@@ -121,7 +122,7 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 | `BEDROCK_ERROR` | 502 | 모델 호출 실패 | 재시도 버튼. 대화는 남아 있다 |
 
 **"일어나면 안 되는 일"로 적힌 것들**(`FORBIDDEN_ROLE`·`DRAFT_NOT_COMPLETE`·`TURN_IN_PROGRESS`·
-`HOLD_REASON_REQUIRED`)은 프론트가 이미 막았어야 하는 경우다.
+`SESSION_CLOSED`·`HOLD_REASON_REQUIRED`)은 프론트가 이미 막았어야 하는 경우다.
 받았다면 화면 상태가 서버와 어긋난 것이므로, 조용히 삼키지 말고 상태를 다시 받아온다.
 
 ### 입력 검증
@@ -481,9 +482,16 @@ interface SessionSummary {
   title: string | null;        // null이면 화면에 "새 대화"
   category: Category | null;   // 확정되면 채워진다. 아이콘 표시용
   submitted: boolean;          // true면 접수 완료 — 읽기 전용
+  withdrawn: boolean;          // 접수 후 철회함. 읽기 전용은 그대로
   updated_at: string;
 }
 ```
+
+**메시지가 하나도 없는 세션은 나오지 않는다.** "새 대화"를 열어놓고 아무 말도 안 하면
+목록에 쌓이기 때문이다. 지금 열어둔 것은 화면이 알고 있으므로 문제되지 않는다.
+
+**접수·철회된 세션도 목록에 남는다.** 게시판에서 사라지는 것과 별개다 —
+사라지면 사용자가 자기가 뭘 냈었는지 모른다. 대신 읽기 전용이다.
 
 **내 것만 나온다.** 게시판은 익명 공개지만 **대화는 개인 것이다.**
 `school_id`가 아니라 로그인한 사용자로 거른다.

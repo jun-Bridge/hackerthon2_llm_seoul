@@ -365,6 +365,41 @@ CREATE TABLE chat_sessions (
 CREATE INDEX idx_sessions_user ON chat_sessions(user_id, updated_at DESC);
 ```
 
+### 대화 행은 두 주인을 갖는다
+
+```sql
+complaint_conversations
+    chat_session_id INTEGER  → chat_sessions(id)  ON DELETE SET NULL
+    complaint_id    INTEGER  → complaints(id)     ON DELETE CASCADE
+    choices         JSONB      그 턴에 제시한 칩 (§7-1.2)
+    refined_json    JSONB      확정 턴에만
+```
+
+| 컬럼 | 언제 채워지나 | 삭제 전파 |
+|---|---|---|
+| `chat_session_id` | 처음부터 | **SET NULL** |
+| `complaint_id` | 접수 시 | CASCADE |
+
+**`chat_session_id`가 `SET NULL`이어야 하는 이유가 결정적이다.**
+
+계정을 탈퇴하면 `chat_sessions`가 `CASCADE`로 지워진다. 그런데 `complaints`는 `SET NULL`이라
+**민원은 남는다**(학교의 공공 기록이므로). 여기서 대화까지 세션을 따라 지워지면
+**접수된 민원은 남는데 그 근거 대화가 사라진다.** 관리자 상세의 "학생 원문"이 빈 채로 남는다.
+
+`SET NULL`이면 세션만 사라지고 대화는 `complaint_id`에 매달려 남는다.
+
+**조회 경로가 둘인 것도 이 구조에서 나온다.**
+
+| 언제 | 무엇으로 찾나 |
+|---|---|
+| 작성 중 (접수 전) | `chat_session_id` |
+| 접수 후 (게시판·관리자) | `complaint_id` |
+
+접수되면 **두 값이 모두 채워진다.** 어느 쪽으로 찾아도 같은 행이 나온다.
+
+**미접수 대화는 세션이 지워지면 고아가 된다** — 둘 다 `NULL`인 행이다.
+정리 작업이 주기적으로 지운다(§12).
+
 `compacted_upto`가 **버퍼의 시작점**이다. 그 이후 메시지만 원문으로 싣는다.
 별도 버퍼 저장소가 필요 없다 — 대화는 어차피 전부 DB에 있으므로 **경계만 기억하면 된다.**
 
@@ -447,7 +482,35 @@ GET /chat-sessions/{sid}/conversation    대화 전체 (화면용 — 압축 전
 **화면에는 전체를 보여준다.** `context`·`compacted_upto`는 LLM 맥락을 줄이는 장치이지
 사용자에게 보일 것을 줄이는 장치가 아니다.
 
-### 7.7 세션 목록 — "과거 대화"
+### 7.7 빈 세션이 쌓이는 것
+
+`POST /chat-sessions`가 곧바로 행을 만들고, 접수할 때도 다음 세션을 미리 발급한다.
+사용자가 열어놓고 아무 말도 안 하면 **제목 없는 빈 세션이 목록에 쌓인다.**
+
+두 가지로 막는다.
+
+1. **목록에서 감춘다.** 메시지가 하나도 없는 세션은 `listSessions` 결과에서 뺀다.
+   화면에는 지금 열어둔 것만 보이므로 사용자는 빈 세션의 존재를 모른다.
+2. **정리 작업이 지운다.** 일정 시간이 지나도 메시지가 없는 세션은 지운다(§12).
+
+**"새 대화"를 눌렀는데 이미 빈 세션이 있으면 그것을 재사용한다.**
+연타로 빈 세션이 여러 개 생기는 것을 막는다.
+
+### 7.8 접수·철회 이후의 세션
+
+| 사건 | 세션은 |
+|---|---|
+| 접수 | `complaint_id`가 차고 **읽기 전용**이 된다. 목록에는 남는다 |
+| 철회 | **읽기 전용 그대로.** 다시 쓸 수 있게 열지 않는다 |
+
+**철회해도 세션이 다시 열리지 않는다.** 이미 관리자가 봤을 수 있는 내용이고,
+같은 대화를 고쳐 다시 접수하면 "무엇이 접수됐던 것인지"가 흐려진다.
+다시 쓰려면 새 세션을 연다.
+
+목록에서는 **철회됨**으로 표시한다 — 사라지면 사용자가 자기가 뭘 냈었는지 모른다.
+게시판에서 사라지는 것과 별개다.
+
+### 7.9 세션 목록 — "과거 대화"
 
 ```
 GET /chat-sessions
@@ -1041,4 +1104,6 @@ def signup(email, password, admin_code):
 - 세션 TTL · 초안 TTL · 턴 TTL
 - `verify_password` 실패 횟수 제한
 - 마이그레이션 도구 (Alembic을 쓸지, `init_db.py` 한 장으로 갈지)
-- 정리 작업(만료 초안·잠금 회수)을 어디서 돌릴지 — 별도 프로세스 vs 요청 중 기회적으로
+- 정리 작업을 어디서 돌릴지 — 별도 프로세스 vs 요청 중 기회적으로.
+  대상: 빈 세션 · 고아 대화(`chat_session_id`·`complaint_id` 둘 다 NULL) · 만료 잠금
+- 빈 세션·고아 대화를 며칠 뒤에 지울지
