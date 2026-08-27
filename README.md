@@ -27,11 +27,16 @@
     │   │   └── versions/
     │   ├── app/
     │   │   ├── api/routes/  HTTP 엔드포인트 (얇게 — 로직 금지)
-    │   │   ├── cache/       Redis 클라이언트·세션/스트림 버퍼
     │   │   ├── core/        설정·env 로딩·로깅
-    │   │   ├── db/
-    │   │   │   ├── models/       SQLAlchemy ORM 모델
-    │   │   │   └── repositories/ 쿼리 캡슐화 (서비스는 ORM을 직접 안 만짐)
+    │   │   ├── db/          엔진별 모듈화
+    │   │   │   ├── postgres/       영속 — 대화·문서·버전
+    │   │   │   │   ├── session.py     엔진·세션 팩토리
+    │   │   │   │   ├── models/        SQLAlchemy ORM
+    │   │   │   │   └── repositories/  쿼리 캡슐화
+    │   │   │   └── redis/          휘발 — 세션·캐시·스트림 버퍼
+    │   │   │       ├── client.py
+    │   │   │       ├── session_store.py
+    │   │   │       └── stream_buffer.py
     │   │   ├── llm/         LLM 클라이언트 추상화 (base + gpt-oss 구현)
     │   │   ├── schemas/     Pydantic 요청·응답 계약
     │   │   └── services/    도메인 로직 (chat / document·canvas)
@@ -44,6 +49,8 @@
             ├── api/         백엔드 클라이언트 (fetch/SSE 래퍼)
             ├── components/
             │   ├── canvas/    문서 편집(캔버스) UI
+            │   │   ├── editor/    본문 편집기·선택 영역 처리
+            │   │   └── revision/  버전 히스토리·diff·되돌리기
             │   ├── chat/      대화 UI
             │   └── common/    공용 프리미티브
             ├── hooks/
@@ -53,7 +60,8 @@
 
 ### 경계 규약
 - `api/routes/`는 요청 파싱 → `services/` 호출 → 응답 직렬화만. 비즈니스 로직은 `services/`.
-- `services/`는 `db/repositories/`를 통해서만 DB에 접근한다. ORM 모델이 라우트나 스키마로 새지 않게.
+- `services/`는 `db/postgres/repositories/`를 통해서만 DB에 접근한다. ORM 모델이 라우트나 스키마로 새지 않게.
+- Postgres와 Redis는 `db/` 아래 **각자 독립 모듈**. 한쪽 모듈이 다른 쪽을 import하지 않는다 — 둘을 함께 쓰는 조합은 `services/`에서.
 - LLM 호출은 전부 `llm/base.py` 인터페이스를 거친다. 모델·서빙 백엔드 교체가 `llm/` 안에서 끝나야 한다.
 - 시크릿은 `.env`만. 하드코딩 금지. `.env.example`은 키 이름·형식만.
 

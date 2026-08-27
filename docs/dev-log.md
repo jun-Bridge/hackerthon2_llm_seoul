@@ -23,3 +23,11 @@ requirements.md 초안 작성 시작 — 슬롯 전부 TBD.
 - 규약 추가: services는 repositories를 통해서만 DB 접근(ORM 모델 누출 금지).
 - **미해소**: 캔버스 기능의 실제 동작 정의(편집형/정리형/화이트보드형) — DB 스키마와 프론트 구조를 가르는 갈림길이라 빌드 전 확정 필요. 슬롯 9 기록.
 - git remote origin 등록: https://github.com/jun-Bridge/hackerthon2_llm_seoul (push는 미실행 — 사용자 승인 대기).
+
+## [2026-08-27] DB 레이아웃 결정 · 캔버스 정의 확정
+- **DB 배치**: `src/db/`로 빼자는 안을 검토했으나 기각. Redis·Postgres 접근 코드는 백엔드가 import하는 파이썬 모듈이라, 백엔드 패키지 트리 밖으로 나가면 별도 패키지 설치(pyproject·editable install)와 Dockerfile 컨텍스트 확장이 따라붙는다 — 배포 단위가 하나인데 소스만 갈라지는 비용. 대신 **`app/db/postgres/`·`app/db/redis/`로 엔진별 독립 모듈화**해 의도한 분리는 그대로 얻었다.
+  - 규약: 두 모듈은 서로 import하지 않는다. 함께 쓰는 조합은 `services/`.
+  - `app/cache/`는 폐기(→ `app/db/redis/`로 흡수). 캐시도 DB 계층의 한 엔진으로 본다.
+- **캔버스 정의 확정: 편집형**(ChatGPT/Claude Canvas형). LLM 생성 문서를 옆 패널에서 사람이 편집 + 선택 영역만 재요청.
+  → Postgres 스키마에 문서·버전이 필요. 프론트에 `components/canvas/{editor,revision}` 분리.
+  → 파생 미정: 문서 포맷(md/richtext), 버전 보관 정책(스냅샷 vs diff), 동시 편집 여부.
