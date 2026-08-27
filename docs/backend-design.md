@@ -42,33 +42,34 @@ app/
 ├─ main.py                 FastAPI 인스턴스. 라우터 등록 → 정적 파일 mount (순서 중요)
 │
 ├─ api/
-│  ├─ deps.py              Depends 제공자 — current_user, require_admin, require_draft_owner
+│  ├─ deps.py              Depends 제공자 — current_user, require_admin, require_session_owner
 │  └─ routes/
 │     ├─ health.py         GET /health
 │     ├─ schools.py        GET /schools
 │     ├─ auth.py           가입·로그인·로그아웃·비밀번호·탈퇴·검증
-│     ├─ draft.py          초안 4개
+│     ├─ session.py        대화 세션 4개
 │     ├─ board.py          게시판 4개
 │     └─ admin.py          관리자 8개
 │
 ├─ schemas/                Pydantic 요청·응답 모델. 계약의 타입이 여기 산다
-│  ├─ auth.py  ├─ complaint.py  ├─ draft.py  └─ common.py
+│  ├─ auth.py  ├─ complaint.py  ├─ session.py  └─ common.py
 │
 ├─ services/               ★ 판단이 사는 곳
 │  ├─ auth_service.py      가입 규칙, 역할 결정, 비밀번호
-│  ├─ draft_service.py     대화 왕복, 확정안 보관, 접수
+│  ├─ session_service.py   대화 왕복, 확정안 보관, 압축, 접수
 │  ├─ complaint_service.py 조회, 상태 전이, 철회, 코멘트
 │  └─ errors.py            도메인 예외 (ConflictError, NotOwnerError …)
 │
 ├─ repo/                   ★ SQL이 사는 곳. 여기 밖에는 SQL이 없다
 │  ├─ pool.py              커넥션 풀
 │  ├─ school_repo.py  ├─ user_repo.py  ├─ complaint_repo.py
+│  ├─ chat_session_repo.py
 │  ├─ conversation_repo.py ├─ comment_repo.py  └─ bedrock_log_repo.py
 │
 ├─ session/                ★ Redis가 사는 곳
 │  ├─ client.py            연결
 │  ├─ login_session.py     sess:{id}
-│  └─ draft_state.py       draft:{key}:owner · :running
+│  └─ session_state.py     turn:{sid}:running · compact:{sid} · step
 │
 ├─ llm/                    ★ Bedrock이 사는 곳
 │  ├─ client.py            invoke_model 호출
@@ -348,11 +349,11 @@ messages  : 과거 대화(원문, 아직 압축 안 된 것)
 CREATE TABLE chat_sessions (
     id             SERIAL PRIMARY KEY,
     user_id        INTEGER NOT NULL,
-    school_id      INTEGER NOT NULL,
+    school_id      INTEGER NOT NULL,  -- users에서 유도 가능하지만, 접수 시 조인을 없애려 복제
     title          VARCHAR(255),      -- 압축이 갱신한다. NULL이면 "새 대화"
     is_manual_title BOOLEAN NOT NULL DEFAULT FALSE,
     context        TEXT,              -- ★ 세션 주제 (압축된 맥락)
-    compacted_upto INTEGER,           -- 여기까지의 메시지는 context에 녹아 있다
+    compacted_upto INTEGER,           -- ★ 메시지 id. 이 id 이하는 context에 녹아 있다
     category       VARCHAR(32),
     complaint_id   INTEGER,           -- 접수되면 연결. NULL이면 초안
     created_at     TIMESTAMPTZ DEFAULT NOW(),
@@ -367,6 +368,9 @@ CREATE INDEX idx_sessions_user ON chat_sessions(user_id, updated_at DESC);
 `compacted_upto`가 **버퍼의 시작점**이다. 그 이후 메시지만 원문으로 싣는다.
 별도 버퍼 저장소가 필요 없다 — 대화는 어차피 전부 DB에 있으므로 **경계만 기억하면 된다.**
 
+**개수가 아니라 메시지 id다.** 개수로 두면 중간 삭제가 생기는 순간 경계가 어긋난다.
+id는 단조 증가하므로 `WHERE id > compacted_upto ORDER BY id`로 버퍼가 정확히 나온다.
+
 ### 7.4 압축은 언제 도나
 
 ```
@@ -377,17 +381,34 @@ CREATE INDEX idx_sessions_user ON chat_sessions(user_id, updated_at DESC);
   └ 임계치를 넘었나?
        ├ 아니오 → 아무것도 하지 않는다
        └ 예 → 백그라운드로 압축
-                ├ 대상: compacted_upto 이후 ~ 최근 N턴 직전까지
-                ├ 입력: 이전 context + 그 구간
-                ├ LLM 호출 (요약 전용, 도구 없음)
+                ├ ★ 대상 구간을 이 시점에 고정한다
+                │     from = compacted_upto,  to = (최근 N턴 직전 메시지의 id)
+                │     압축이 도는 동안 새 턴이 들어와도 to는 움직이지 않는다
+                ├ 입력: 이전 context + (from, to] 구간
+                ├ LLM 호출 (요약 전용, 도구 없음) — 이것도 bedrock_logs에 남긴다
                 ├ 결과: 새 context · 새 title
-                └ 트랜잭션으로 context·title·compacted_upto를 함께 갱신
+                └ 트랜잭션으로 갱신
+                      SET context=?, title=?, compacted_upto=?
+                      WHERE id=? AND compacted_upto=?      ← from과 같을 때만
 ```
+
+**`WHERE compacted_upto = from`이 안전장치다.** 압축이 도는 사이 다른 압축이 먼저 끝났다면
+0행이 되어 이번 결과를 버린다. 두 번 압축해 구간이 겹치는 일이 없다.
+
+**압축 중에도 새 턴은 정상 진행된다.** 그 턴은 옛 `context`와 조금 긴 버퍼를 읽는데,
+맥락이 빠지는 게 아니라 원문이 더 실릴 뿐이라 품질 문제가 없다.
+**턴 락과 압축 락을 따로 두는 이유가 이것이다** — 압축이 대화를 막지 않는다.
 
 **뒤에서 돈다.** 턴 응답을 먼저 끝내고 실행하므로 사용자를 기다리게 하지 않는다.
 
 **최근 N턴은 압축하지 않는다.** 방금 오간 말이 요약으로 뭉개지면 되묻기가 이상해진다.
 버퍼는 항상 원문으로 남는다.
+
+**확정안이 압축 구간에 들어가면 요약이 그것을 반드시 담아야 한다.** 학생이 확정안을 받고도
+더 고치다가 그 턴이 밀려나면, 요약이 "카테고리·위치·제목이 이렇게 확정됐다"를 빠뜨릴 경우
+모델이 처음부터 다시 묻는다. 압축 프롬프트에 **"확정된 항목이 있으면 그대로 옮겨 적어라"**를 넣는다.
+
+접수 자체는 영향을 받지 않는다 — `refined_json`은 DB에서 직접 읽으므로 요약과 무관하다.
 
 **실패해도 대화는 멀쩡해야 한다.** 기존 `context`·`title`·`compacted_upto`를 그대로 두고
 다음 턴에 다시 시도한다. **압축은 부가 작업이지 필수 경로가 아니다.**
@@ -396,7 +417,7 @@ CREATE INDEX idx_sessions_user ON chat_sessions(user_id, updated_at DESC);
 둘이 동시에 `compacted_upto`를 옮기면 구간이 겹치거나 빈다.
 
 ```python
-# session/draft_state.py
+# session/session_state.py
 def acquire_compact(sid) -> bool:
     return redis.set(f"compact:{sid}", "1", nx=True, ex=COMPACT_TTL)
 ```
@@ -416,7 +437,17 @@ def acquire_compact(sid) -> bool:
 
 사람이 정한 이름을 기계가 뒤엎으면 안 된다.
 
-### 7.6 세션 목록 — "과거 대화"
+### 7.6 세션 하나 열기
+
+```
+GET /chat-sessions/{sid}                 메타 (제목·카테고리·접수 여부)
+GET /chat-sessions/{sid}/conversation    대화 전체 (화면용 — 압축 전 원문 그대로)
+```
+
+**화면에는 전체를 보여준다.** `context`·`compacted_upto`는 LLM 맥락을 줄이는 장치이지
+사용자에게 보일 것을 줄이는 장치가 아니다.
+
+### 7.7 세션 목록 — "과거 대화"
 
 ```
 GET /chat-sessions
@@ -424,6 +455,10 @@ GET /chat-sessions
 ```
 
 **`user_id`로 거른다.** 게시판은 익명 공개지만 **초안 대화는 개인 것이다.**
+
+**접수는 `POST /chat-sessions/{sid}/submit`이다.** 그 세션의 마지막 `refined_json`을 꺼내
+`complaints`를 만들고, `chat_sessions.complaint_id`를 채우고, 새 세션을 하나 열어 함께 돌려준다.
+셋이 한 트랜잭션이다.
 
 **접수된 세션은 이어서 대화할 수 없다.** `complaint_id`가 차면 읽기 전용이 되고,
 새로 쓰려면 새 세션을 연다. 이미 게시판에 올라간 민원의 근거 대화를 뒤에서
@@ -482,7 +517,7 @@ CLASSIFY_AND_REFINE = {
 | **모델** (`ask_followup.choices`) | 맥락에 맞춘 선택지 | 고정 목록에 없는 상황을 덮는다 |
 
 ```python
-# services/draft_service.py
+# services/session_service.py
 def _merge_choices(missing: str, model_choices: list[str], category: str | None):
     if missing == "category":
         return CATEGORIES                      # 7종 고정. 모델 것을 쓰지 않는다
@@ -490,6 +525,9 @@ def _merge_choices(missing: str, model_choices: list[str], category: str | None)
     merged = fixed + [c for c in model_choices if c not in fixed]
     return merged[:5] + ["직접 입력"]
 ```
+
+**`missing='detail'`인데 카테고리가 아직 없으면** 고정 칩을 붙일 근거가 없다.
+그때는 모델이 준 선택지만 쓴다. 순서를 서버가 강제하지 않기 때문에 생길 수 있는 상황이다.
 
 **카테고리만은 모델 선택지를 무시하고 고정 7종을 쓴다.** `complaints.category`가
 그 7개 중 하나여야 하는데, 모델이 "냉난방 문제"처럼 살짝 다른 문구를 주면 매칭이 깨진다.
@@ -507,17 +545,20 @@ POST /chat-sessions/{sid}/messages   { message | choice }
   ├ 접수 여부 확인       complaint_id가 있으면 409 SESSION_CLOSED
   ├ session.acquire_turn(sid)                       이미 돌면 409
   │
-  ├ conversation_repo.add(conn, sid, 'student', text)
-  ├ context, buffer = chat_session_repo.load_context(conn, sid)
-  │    context = 세션주제(압축된 맥락) · buffer = compacted_upto 이후 원문
+  ├ [커넥션 획득]
+  │    conversation_repo.add(conn, sid, 'student', text)
+  │    context, buffer = chat_session_repo.load_context(conn, sid)
+  │       context = 세션주제(압축된 맥락) · buffer = compacted_upto 이후 원문
+  ├ [커넥션 반납] ★ LLM을 부르는 동안 붙들지 않는다
   │
   ├ llm.refine(context, buffer)                     ← 세션주제 + 버퍼만. 도구 둘을 붙여 호출
   │    └ bedrock_log_repo.add(...)
   │
   ├─ ask_followup 인 경우
   │    ├ choices = _merge_choices(missing, model_choices, 지금까지의 category)
-  │    ├ conversation_repo.add(conn, sid, 'assistant', question)
-  │    ├ state.set(sid, step=missing)                → Redis
+  │    ├ [커넥션 재획득]
+  │    ├ conversation_repo.add(conn, sid, 'assistant', question, choices=choices)
+  │    ├ state.set(sid, step=missing)                → Redis (빠른 조회용)
   │    └ return { is_complete:false, question, choices, step }
   │
   └─ classify_and_refine 인 경우
@@ -546,8 +587,13 @@ POST /chat-sessions/{sid}/messages   { message | choice }
 되묻기 없이 바로 확정안이 나온다. 시안이 `idle → location → detail → confirm`을
 브라우저에서 강제하는 것과 다른 점이다 — **몇 단계가 될지는 모델이 정한다.**
 
-`state.set(sid, step=…)`은 화면 복원용이다. 새로고침했을 때 어느 칩을 다시 보여줄지
-알아야 하기 때문이고, **진행을 통제하는 값이 아니다.**
+`state.set(sid, step=…)`은 빠른 조회용이고 **진행을 통제하는 값이 아니다.**
+
+**칩은 대화 기록에도 함께 저장한다.** `complaint_conversations`에 `choices JSONB` 컬럼을 두고
+assistant 발화와 같은 행에 넣는다. Redis만 믿으면 **TTL이 만료된 뒤 새로고침했을 때
+칩이 사라진다** — 대화는 멀쩡한데 선택지만 없는 상태가 되어 사용자가 무엇을 골라야 할지 모른다.
+
+Redis는 없으면 DB에서 읽는 캐시일 뿐이다.
 
 ### 7-1.5 답변이 질문에 맞지 않을 때
 
@@ -560,7 +606,7 @@ POST /chat-sessions/{sid}/messages   { message | choice }
 그래서 서버는 **같은 단계가 반복되는지**만 세면 된다.
 
 ```python
-# services/draft_service.py
+# services/session_service.py
 same = state.bump_if_same(sid, result.missing)     # Redis에서 연속 횟수 누적
 
 if same >= 2:
@@ -681,8 +727,8 @@ LLM 응답 도착
 | 키 | TTL | 갱신 |
 |---|---|---|
 | `sess:{session_id}` | 로그인 유지 시간 | **요청마다 연장** (sliding) |
-| `draft:{sid}:owner` | 초안 보존 시간 | 연장하지 않는다 |
-| `draft:{sid}:running` | 짧게 (한 턴 최대 시간) | — |
+| `turn:{sid}:running` | 짧게 (한 턴 최대 시간) | — |
+| `compact:{sid}` | 짧게 (압축 1회 시간) | — |
 | `sess_state:{sid}` | 초안과 같게 | 턴마다 갱신 |
 
 **모든 키에 TTL이 있다.** 없는 키를 만들지 않는다 — 지우는 것을 잊으면 영원히 남는다.
@@ -872,6 +918,15 @@ def refine(history: list[dict]) -> RefineResult:
 
 **`input`은 이미 파싱된 객체다.** JSON 문자열이 아니라 dict이므로 `json.loads`가 필요 없다.
 
+**`tool_use` 블록이 여럿 올 수 있다.** 모델이 두 도구를 한꺼번에 부르는 경우다.
+`next(...)`로 **첫 번째만 쓴다.** 둘을 합치려 들면 "부족한데 확정도 했다"는 모순 상태가 된다.
+`ask_followup`과 `classify_and_refine`은 배타적이므로 먼저 나온 것을 모델의 판단으로 본다.
+
+**압축 호출도 남긴다.** 심사에서 "호출이 몇 번 있었나"를 보는데 정제만 세면 실제보다 적다.
+`is_complete`는 정제 호출에만 의미가 있으므로 압축 건은 `false`로 둔다.
+
+**`school_id`는 요청 컨텍스트의 세션에서 가져온다.** 백그라운드 압축도 그 세션의 학교를 안다.
+
 **로그는 성공·실패 모두 남긴다.** 실패만 안 남기면 심사 때 "호출이 몇 번 있었나"가 어긋난다.
 **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
 익명성 관리 대상이 늘어난다.
@@ -966,15 +1021,15 @@ def signup(email, password, admin_code):
 
 | 계약 | 서비스 |
 |---|---|
-| #1 `listSchools` | `school_repo.list_all` (서비스 없이 라우터에서 바로 — 판단이 없다) |
+| #1 `listSchools` | `school_service.list_all` — 얇지만 계층을 건너뛰지 않는다 |
 | #2~7 인증 | `auth_service` |
 | #7-1 `verifyPassword` | `auth_service.verify_password` |
-| #8~11 초안 | `draft_service` |
+| #8~11 대화 세션 | `session_service` (접수는 `POST /chat-sessions/{sid}/submit`) |
 | #12~15 게시판 | `complaint_service` |
 | #16~23 관리자 | `complaint_service` (+ `bedrock_log_repo`) |
 
-**#1만 서비스를 거치지 않는다.** 판단할 것이 없는 단순 조회라 계층을 하나 더 두면
-불필요한 위임만 생긴다. 규칙이 생기면 그때 서비스를 만든다.
+**단순 조회여도 서비스를 거친다.** 위임 한 줄이 아깝다고 §2의 계층 규칙에 예외를 만들면,
+"이건 간단하니까"가 쌓여 규칙이 무너진다. 예외 없는 규칙이라야 테스트로 강제할 수 있다.
 
 ---
 

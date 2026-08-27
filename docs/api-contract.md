@@ -52,22 +52,9 @@ HTTP 경계로 옮긴 것이다. 기능 자체가 궁금하면 그쪽을 본다.
 **세션 실체가 Redis에 있어야 하는 이유**: 워커가 여럿이다. 프로세스 메모리에 두면 다음 요청이
 다른 워커로 갈 때 로그인이 풀린다. Redis에 있으면 어느 워커가 받든 같고, 새로고침해도 유지된다.
 
-```
-Redis   sess:{session_id}          → { user_id, school_id, role }
-        draft:{draft_key}:owner    → user_id
-        draft:{draft_key}:running  → 진행 중인 턴 표시 (SET NX)
-```
-
-**세션 TTL은 요청마다 연장한다(sliding).** 고정 만료면 민원을 길게 쓰는 도중 로그아웃된다.
-활동이 있는 한 유지되고, 손을 놓으면 만료된다.
-
-**초안 TTL은 연장하지 않는다.** 발급 시점부터 고정이다. 미접수 초안은 버려도 되는 데이터라
-오래 붙들 이유가 없다. 만료된 키로 접근하면 **404 `DRAFT_NOT_FOUND`** —
-프론트는 이걸 받으면 새 초안을 시작한다.
-
-**`draft:{key}:owner`가 초안 소유권을 만든다.** `complaint_conversations`에 작성자 컬럼이 없어서
-이게 없으면 남의 `draft_key`를 아는 사람이 그 대화를 읽고 이어 쓸 수 있다.
-draft 엔드포인트(#8~#11)는 전부 이 값을 세션의 `user_id`와 대조하고, 어긋나면 403.
+**세션의 소유자는 서버가 확인한다.** 남의 세션 id를 알아도 열리지 않는다 —
+목록·대화·접수 전부 로그인한 사용자의 것인지 대조하고, 아니면 **404**다.
+(존재 여부를 흘리지 않으려고 403이 아니다.)
 
 **그 외에는 아무것도 캐시하지 않는다.** 민원 목록·통계·코멘트는 매번 PostgreSQL에서 다시 읽는다.
 다른 사용자가 계속 바꾸는 데이터라 캐시하면 누군가는 낡은 것을 본다.
@@ -223,7 +210,7 @@ interface ConversationTurn {
 > 워커가 여럿이라는 사실이 이 계약의 여러 곳을 정한다 — 세션이 Redis에 있어야 하는 이유,
 > 전이 검증이 `UPDATE ... WHERE`인 이유, 목록·통계를 캐시하지 않는 이유가 전부 여기서 나온다.
 
-24개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
+26개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
 | # | 프론트 함수 | HTTP | 백엔드 함수 | 무엇을 하나 | 건드리는 테이블 |
 |---|---|---|---|---|---|
@@ -235,10 +222,12 @@ interface ConversationTurn {
 | 6 | `changePassword` | `PATCH /auth/password` | `change_password` | 비밀번호 변경 | `users` R/W |
 | 7 | `deleteAccount` | `DELETE /auth/me` | `delete_account` | 탈퇴 | `users` D · `complaints` W(SET NULL) |
 | 7-1 | `verifyPassword` | `POST /auth/verify-password` | `verify_password` | 비밀번호 확인만 | `users` R |
-| 8 | `startDraft` | `POST /drafts` | `create_draft` | 작성용 키 발급 | Redis W |
-| 9 | `sendMessage` | `POST /drafts/{k}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 · `bedrock_logs` W · Redis R/W |
-| 10 | `getDraftConversation` | `GET /drafts/{k}/conversation` | `get_draft_conversation` | 대화 복구 | `complaint_conversations` R · Redis R |
-| 11 | `submitDraft` | `POST /drafts/{k}/submit` | `submit_draft` | **정식 접수** | `complaints` W · `complaint_conversations` W |
+| 8 | `startSession` | `POST /chat-sessions` | `create_session` | 세션 생성 | `chat_sessions` W |
+| 8-1 | `listSessions` | `GET /chat-sessions` | `list_sessions` | **과거 대화 목록** | `chat_sessions` R |
+| 8-2 | `getSession` | `GET /chat-sessions/{sid}` | `get_session` | 세션 메타·현재 단계 | `chat_sessions` R |
+| 9 | `sendMessage` | `POST /chat-sessions/{sid}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 · `bedrock_logs` W · Redis R/W |
+| 10 | `getSessionConversation` | `GET /chat-sessions/{sid}/conversation` | `get_conversation` | 대화 복구 | `complaint_conversations` R |
+| 11 | `submitSession` | `POST /chat-sessions/{sid}/submit` | `submit_session` | **정식 접수** | `complaints` W · `chat_sessions` W |
 | 12 | `listComplaints` | `GET /complaints` | `list_complaints` | 게시판 목록 | `complaints` R |
 | 13 | `getComplaint` | `GET /complaints/{id}` | `get_complaint` | 상세 (상태 안 바뀜) | `complaints` R · `complaint_comments` R |
 | 14 | `getComplaintConversation` | `GET /complaints/{id}/conversation` | `get_complaint_conversation` | 원문 보기 | `complaint_conversations` R |
@@ -453,31 +442,75 @@ def verify_password(body: VerifyIn, user = Depends(current_user)) -> None:
 
 ---
 
-### 2.2 민원 작성 — `api/draft.js` ↔ `routes/draft.py`
+### 2.2 민원 작성 — `api/session.js` ↔ `routes/session.py`
 
 ---
 
-#### 8. `startDraft` — 작성 시작
+#### 8. `startSession` — 작성 시작
 
 ```js
-export async function startDraft() { ... }   // → { draft_key }
+export async function startSession() { ... }   // → { session_id }
 ```
 ```python
-@router.post("/drafts", status_code=201)
-def create_draft(user = Depends(current_user)) -> DraftOut:
-    key = str(uuid4())
-    return DraftOut(draft_key=key)                          # PostgreSQL에는 아직 안 쓴다
+@router.post("/chat-sessions", status_code=201)
+def create_session(user = Depends(current_user)) -> SessionOut:
 ```
 
-**"새 민원 작성"을 누를 때 한 번.** 이 키가 이후 대화 전체를 묶는다.
-행은 첫 메시지에서 생기므로 여기서는 키만 발급한다.
+**"새 민원 작성"을 누를 때 한 번.** 세션 행이 만들어지고, 이후 대화가 여기 묶인다.
 
-**소유권은 Redis가 쥔다.** 키를 발급하면서 `draft:{draft_key}:owner = user_id`를 함께 쓴다.
-이후 draft 엔드포인트는 전부 이 값을 세션의 `user_id`와 대조하고, 어긋나면 **403**이다.
+**소유자는 세션 행에 남는다.** 이후 모든 세션 엔드포인트가 로그인한 사용자의 것인지 대조하고,
+아니면 **404**다. 접수되면 소유권이 민원에도 이어져 철회 판정에 쓰인다.
 
-`complaint_conversations`에 작성자 컬럼이 없어 DB만으로는 검증이 안 되는데, 초안은 접수 전
-임시 데이터라 영속 컬럼을 늘리기보다 Redis에 수명을 맞추는 편이 맞다.
-접수되는 순간 소유권은 `complaints.submitted_by_user_id`로 넘어간다.
+**제목은 아직 없다.** 화면에는 "새 대화"로 보이고, 대화가 오가면 서버가 붙인다.
+
+---
+
+#### 8-1. `listSessions` — 과거 대화 목록
+
+```js
+export async function listSessions() { ... }   // → SessionSummary[]
+```
+```python
+@router.get("/chat-sessions")
+def list_sessions(user = Depends(current_user)) -> list[SessionSummaryOut]:
+```
+
+```ts
+interface SessionSummary {
+  session_id: number;
+  title: string | null;        // null이면 화면에 "새 대화"
+  category: Category | null;   // 확정되면 채워진다. 아이콘 표시용
+  submitted: boolean;          // true면 접수 완료 — 읽기 전용
+  updated_at: string;
+}
+```
+
+**내 것만 나온다.** 게시판은 익명 공개지만 **대화는 개인 것이다.**
+`school_id`가 아니라 로그인한 사용자로 거른다.
+
+**최신순.** 사이드바에 그대로 늘어놓으면 된다.
+
+---
+
+#### 8-2. `getSession` — 세션 메타와 현재 단계
+
+```js
+export async function getSession(sessionId) { ... }   // → SessionDetail
+```
+
+`SessionSummary`에 더해 **지금 어느 단계이고 무슨 칩을 보여줄지**가 온다.
+새로고침 후 화면 복원에 쓴다.
+
+```ts
+interface SessionDetail extends SessionSummary {
+  step: 'category' | 'location' | 'detail' | 'confirm' | null;
+  choices: string[] | null;    // 지금 보여줄 칩. 없으면 자유 입력만
+  preview: Preview | null;     // step='confirm'이면 확정안
+}
+```
+
+**세션을 열 때 이것과 `getSessionConversation`을 함께 받는다.**
+대화는 말풍선으로, `step`·`choices`는 입력창 위 칩으로 그린다.
 
 ---
 
@@ -485,15 +518,14 @@ def create_draft(user = Depends(current_user)) -> DraftOut:
 
 ```js
 /** 학생 메시지를 보내고 AI 응답을 받는다. 되묻는 중이면 is_complete=false. */
-export async function sendMessage(draftKey, message) { ... }   // → RefineResult
+export async function sendMessage(sessionId, message) { ... }   // → RefineResult
 ```
 ```python
-@router.post("/drafts/{draft_key}/messages")
-def send_message(draft_key: str, body: SendMessageIn,
+@router.post("/chat-sessions/{sid}/messages")
+def send_message(sid: int, body: SendMessageIn,
                  user = Depends(current_user)) -> RefineResultOut:
-    require_draft_owner(draft_key, user.id)      # Redis 대조, 어긋나면 403
+    require_session_owner(sid, user.id)      # Redis 대조, 어긋나면 403
 
-def send_message(self, draft_key: str, student_message: str) -> dict:
     result = self.bedrock.refine_complaint(conversation)                   # ③ 도구 호출
     ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
                   else result["follow_up_question"])
@@ -502,7 +534,7 @@ def send_message(self, draft_key: str, student_message: str) -> dict:
 
 | 파라미터 | 타입 | 설명 |
 |---|---|---|
-| `draft_key` | `str` (경로) | `startDraft`가 준 키 |
+| `sid` | `str` (경로) | `startSession`가 준 키 |
 | `message` | `str` (본문) | 학생이 친 구어체 문장 |
 
 **효과** — 학생 발화와 AI 응답이 대화 기록에 남는다. **민원이 만들어지지는 않는다** —
@@ -549,15 +581,15 @@ finally:
 
 ---
 
-#### 10. `getDraftConversation` — 새로고침 복구
+#### 10. `getSessionConversation` — 새로고침 복구
 
 ```js
-export async function getDraftConversation(draftKey) { ... }   // → ConversationTurn[]
+export async function getSessionConversation(sessionId) { ... }   // → ConversationTurn[]
 ```
 ```python
-@router.get("/drafts/{draft_key}/conversation")
-def get_draft_conversation(draft_key: str, user = Depends(current_user)) -> list[TurnOut]:
-    require_draft_owner(draft_key, user.id)    # 읽기도 소유권을 본다
+@router.get("/chat-sessions/{sid}/conversation")
+def get_conversation(sid: int, user = Depends(current_user)) -> list[TurnOut]:
+    require_session_owner(sid, user.id)    # 읽기도 소유권을 본다
 ```
 
 **프론트는 대화 배열을 자기 상태에만 들고 있지 않는다.** 화면을 다시 그릴 때 이걸 읽는다.
@@ -565,17 +597,17 @@ def get_draft_conversation(draft_key: str, user = Depends(current_user)) -> list
 
 ---
 
-#### 11. `submitDraft` — 정식 접수
+#### 11. `submitSession` — 정식 접수
 
 ```js
-export async function submitDraft(draftKey) { ... }   // → { complaint_id, next_draft_key }
+export async function submitSession(sessionId) { ... }   // → { complaint_id, next_session_id }
 ```
 ```python
-@router.post("/drafts/{draft_key}/submit", status_code=201)
-def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
-    require_draft_owner(draft_key, user.id)
+@router.post("/chat-sessions/{sid}/submit", status_code=201)
+def submit_session(sid: int, user = Depends(current_user)) -> SubmitOut:
+    require_session_owner(sid, user.id)
     next_key = str(uuid4())
-    return SubmitOut(complaint_id=cid, next_draft_key=next_key)
+    return SubmitOut(complaint_id=cid, next_session_id=next_key)
 
 ```
 
@@ -584,11 +616,11 @@ def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
 
 **본문에 확정안을 싣지 않는 이유** — 프론트가 보낸 값을 그대로 저장하면 화면에서 값을 바꿔
 보낼 수 있다. **AI가 확정한 것과 접수된 것이 달라질 여지를 없앤다.**
-서버가 그 draft의 마지막 결과를 쓴다.
+서버가 그 세션의 마지막 확정안을 쓴다.
 
-**`next_draft_key`를 함께 주는 이유** — 접수되면 그 draft는 닫힌다. 다음 민원이 앞 대화와
+**`next_session_id`를 함께 주는 이유** — 접수되면 그 세션은 닫힌다. 다음 민원이 앞 대화와
 섞이지 않도록 서버가 새 키를 바로 발급한다. 프론트는 받아서 교체만 하면 되고
-`startDraft()`를 다시 부르지 않는다.
+`startSession()`를 다시 부르지 않는다.
 
 **오류** `409 DRAFT_NOT_COMPLETE` — 아직 되묻는 중이라 확정안이 없다
 
@@ -932,7 +964,9 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 | 한 일 | 다시 받을 것 |
 |---|---|
 | 로그인 · 앱 진입 | `getMe` → 역할에 맞는 첫 화면 데이터 |
-| 민원 접수 (#11) | `listComplaints` (내 글이 목록에 뜬다) |
+| 새 대화 시작 (#8) | `listSessions` (목록 맨 위에 뜬다) |
+| 메시지 전송 (#9) | 없음 — 응답으로 갱신. 제목이 바뀌면 `listSessions` |
+| 민원 접수 (#11) | `listComplaints` + `listSessions` (그 세션이 읽기 전용이 된다) |
 | 철회 (#15) | `listComplaints` (+ 관리자 화면이면 `getStats`) |
 | 상세 열람 (#17) | 응답이 갱신된 `Complaint`다. **목록의 그 행도 갱신한다** — 미확인→확인으로 바뀌었다. `getStats`도 다시 받는다 |
 | 수락·해결·보류·거절 (#18~21) | 응답이 갱신된 `Complaint`. 목록 행 교체 + `getStats` |
@@ -963,7 +997,7 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 | 대화 이력 | 매번 서버에서 다시 읽는다 | DB가 진실원천 |
 | 익명성 | 작성자를 표시할 방법이 없다 | 작성자 id를 응답에 넣지 않는다 |
 
-**프론트가 상태로 들고 있어도 되는 것**: 로그인 여부와 역할, 현재 `draft_key`,
+**프론트가 상태로 들고 있어도 되는 것**: 로그인 여부와 역할, 현재 `sid`,
 열어 둔 민원 id, 입력 중인 텍스트, 모달 열림 여부.
 
 **들고 있으면 안 되는 것**: 민원 목록, 통계, 대화 이력, 코멘트.
@@ -997,7 +1031,8 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 2. getMe()
    ├─ 401 → 로그인 화면
    └─ 성공 → role로 갈린다
-              student → listComplaints() + 작성 화면 (startDraft는 "새 민원"을 누를 때)
+              student → listSessions() + listComplaints() + 작성 화면
+                        (startSession은 "새 민원"을 누를 때)
               admin   → getStats() + listComplaints()
 3. 첫 화면 데이터가 오면 로딩을 걷는다
 ```
@@ -1009,11 +1044,11 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 ```
 logout()  →  서버가 Redis 세션 삭제 + 쿠키 만료
           →  프론트는 메모리에 들고 있던 것을 전부 버린다
-             (getMe 결과, 목록, 통계, draft_key, 입력 중이던 텍스트)
+             (getMe 결과, 목록, 통계, 열어둔 세션, 입력 중이던 텍스트)
           →  로그인 화면
 ```
 
-**남은 `draft_key`를 다시 쓰지 않는다.** 로그아웃 후 다시 로그인하면 새로 발급받는다.
+**남은 `sid`를 다시 쓰지 않는다.** 로그아웃 후 다시 로그인하면 새로 발급받는다.
 이전 키는 Redis에 소유자가 남아 있어 다른 계정으로는 403이고, 같은 계정이어도
 접수 안 된 초안을 이어쓰는 것은 범위 밖이다(TTL로 사라진다).
 
@@ -1027,7 +1062,7 @@ logout()  →  서버가 Redis 세션 삭제 + 쿠키 만료
 src/api/
 ├─ client.js      fetch 래퍼 — credentials·헤더·오류 정규화. 여기만 fetch를 안다
 ├─ auth.js        8개
-├─ draft.js       4개
+├─ session.js     6개
 ├─ board.js       4개
 └─ admin.js       8개
 ```
@@ -1267,7 +1302,7 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 | 2.3~2.4 | 되묻기 · 이전 답변 반영 | #9 `is_complete=false` · 대화 전체를 매번 로드 |
 | 2.5 | 미리보기 확인 후 결정 | #9 `preview` |
 | 2.6 | 대화로 수정 요청 | #9 재호출 (수정 전용 API 없음) |
-| 2.7 | 버튼을 눌러야 접수 | #11 `submitDraft` |
+| 2.7 | 버튼을 눌러야 접수 | #11 `submitSession` |
 | 2.8 | 원문 보기 | #14 `getComplaintConversation` |
 | 2.9 | 철회 + 비밀번호 확인 | #15 `withdrawComplaint` |
 | 2.10 | 본인 것만 철회 | `is_mine` + 서버 `submitted_by_user_id` 대조 |
