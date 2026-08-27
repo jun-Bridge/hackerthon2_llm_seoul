@@ -33,11 +33,28 @@ docs/
 
 | 층 | 선택 |
 |---|---|
-| 서버 | FastAPI + uvicorn, **8501 포트** |
+| 서버 | FastAPI + uvicorn, **8501 포트**, 워커 여러 개 |
 | 프론트 | 정적 파일(JS)을 같은 서버가 서빙 |
 | LLM | AWS Bedrock `global.anthropic.claude-sonnet-5`, 도구 호출 |
-| DB | SQLite |
+| 영속 저장 | **PostgreSQL** |
+| 휘발 저장 | **Redis** — 로그인 세션, 초안 소유권 |
 | 배포 | EC2 (팀 키 `hackathon-e1-t01-key.pem`) |
+
+```
+      브라우저
+         │  :8501
+    ┌────▼─────┐
+    │  uvicorn │  워커 N개
+    └────┬─────┘
+   ┌─────┴─────┐
+┌──▼──┐   ┌────▼───┐
+│  PG │   │ Redis  │   ← 중앙. 모든 워커가 같은 것을 본다
+└─────┘   └────────┘
+```
+
+**워커를 여럿 두는 이유**: LLM 호출이 수 초씩 걸린다. 하나면 한 사람의 정제가 끝날 때까지
+다른 사람의 게시판 조회까지 막힌다. **그래서 상태를 프로세스 메모리에 둘 수 없다** —
+세션은 Redis, 확정 데이터는 PostgreSQL.
 
 **8501에 일반 웹서버를 올린다.** 대회 가이드가 함께 준 Streamlit 코드를
 "인프라와 Kiro 연동 확인용 예시/테스트 코드"라고 명시하므로 프론트엔드는 제약이 아니다.
@@ -56,19 +73,25 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501
 3. **AI는 되묻는다.** 정보가 부족하면 확정하지 않고 질문한다. 확정안이 나와도
    **사용자가 접수를 눌러야** 게시판에 올라간다.
 4. **상태 전이는 서버가 판정한다.** 프론트가 버튼을 감추는 것은 편의이고,
-   막는 것은 서버다. 전이 검증은 `UPDATE ... WHERE status=<전제>`로 한다.
+   막는 것은 서버다. 전이 검증은 `UPDATE ... WHERE status=<전제>`로 한다 —
+   워커가 여럿이라 조회 후 판정하면 두 관리자가 동시에 눌렀을 때 둘 다 통과한다.
+5. **상태를 프로세스 메모리에 두지 않는다.** 세션은 Redis, 확정 데이터는 PostgreSQL.
+   어느 워커가 요청을 받든 같은 결과가 나와야 한다.
 
 ## 시작하기
 
 ```bash
 # 1. Bedrock 연결 실측 — 첫 태스크
-python connectionTest/bedrock_simple_test.py
+python bedrock_simple_test.py
 
-# 2. DB 준비
+# 2. 데이터스토어 기동 (PostgreSQL · Redis)
+docker compose -f docker/compose.dev.yml up -d
+
+# 3. 스키마·시드
 python init_db.py && python seed_schools.py
 
-# 3. 서버
-uvicorn app.main:app --host 0.0.0.0 --port 8501
+# 4. 서버
+uvicorn app.main:app --host 0.0.0.0 --port 8501 --workers 4
 ```
 
 **M0의 첫 태스크는 Bedrock 도구 호출 실측이다.** 민원 분류·정제 전체가 그 위에 서 있어서,

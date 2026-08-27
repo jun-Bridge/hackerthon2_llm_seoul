@@ -9,18 +9,29 @@
 └───────────────────────────┬────────────────────────────────┘
                             │
                  ┌──────────▼──────────┐
-                 │  Web App (FastAPI)   │
-                 │  (역할별 화면 분기)   │
-                 └──────────┬──────────┘
-                            │
-                 ┌──────────▼──────────┐
-                 │  SQLite (data/app.db)│
-                 │  schools/admin_codes/│
-                 │  users/complaints/   │
-                 │  complaint_conversations/│
-                 │  complaint_comments   │
-                 └───────────────────────┘
+                 │  FastAPI (uvicorn)   │
+                 │  워커 N개 · :8501     │
+                 │  정적 프론트도 서빙   │
+                 └───┬──────────────┬───┘
+                     │              │
+        ┌────────────▼───┐   ┌──────▼──────┐
+        │  PostgreSQL    │   │    Redis    │
+        │  확정된 것      │   │ 살아있는 것  │
+        ├────────────────┤   ├─────────────┤
+        │ schools        │   │ sess:{id}   │
+        │ admin_codes    │   │ draft:{k}:  │
+        │ users          │   │   owner     │
+        │ complaints     │   └─────────────┘
+        │ ..._conversations │
+        │ ..._comments   │
+        │ bedrock_logs   │
+        └────────────────┘
 ```
+
+**워커가 여럿이라는 것의 의미**: LLM 호출이 수 초씩 걸린다. 워커가 하나면 한 사람이 민원을
+정제하는 동안 다른 사람의 게시판 조회까지 막힌다. 워커를 늘려 그 대기가 서로를 막지 않게 한다.
+**대신 프로세스 메모리에 상태를 둘 수 없다** — 다음 요청이 다른 워커로 갈 수 있으므로
+세션은 Redis, 확정 데이터는 PostgreSQL에 둔다.
 
 **역할 기반 화면 분기**: 목업 HTML은 상단 스위처로 학생/관리자 뷰를 자유 전환하지만, 실제 서비스에서는 로그인 세션의 `role`이 화면을 고정한다. 관리자 계정으로 로그인하면 관리자 대시보드만 보이고, 학생 계정은 작성+게시판만 보인다.
 
@@ -61,7 +72,7 @@ schools (학교)
 | complaint → complaint_comments | 1:N | CASCADE | 위와 동일 |
 | user → complaint_comments (author_user_id) | 1:N | SET NULL | 코멘트 작성 관리자가 탈퇴해도 코멘트 텍스트는 남음 (게시판엔 "관리자"로만 표시되므로 작성자 식별이 애초에 노출되지 않음) |
 
-### SQLite Schema
+### PostgreSQL Schema
 
 ```sql
 CREATE TABLE schools (
@@ -147,7 +158,7 @@ hackerthon2_llm_1/
 ├─ app.py                        # 진입점: 인증 → role 분기
 ├─ bedrock_simple_test.py        # Bedrock 연결 테스트
 ├─ requirements.txt
-├─ init_db.py                    # SQLite 스키마 초기화
+├─ init_db.py                    # PostgreSQL 스키마 초기화
 ├─ seed_schools.py               # 학교/이메일 도메인/관리자 코드 데모 시드
 ├─ backup_db.py                  # DB 백업 (cron)
 │
@@ -193,7 +204,7 @@ DB(영속)와 휘발성 상태의 경계를 구현 전에 못박는다. 로그�
 
 - **대화 전체** (`db.get_conversation(draft_key)` / `get_conversation_by_complaint(id)`) — 세션에는 `draft_key`/`complaint_id`만
 - **민원 목록·통계·코멘트 목록** — 렌더링마다 재조회. 다른 사용자의 변경(다른 관리자가 방금 상태를 바꿈 등)을 반영하려면 캐시하면 안 됨
-- **민원 상태 자체** — `st.session_state`에 "현재 보고 있는 민원의 상태" 같은 것을 복제해 들고 있지 않는다. 화면에 그릴 때마다 DB 값을 그대로 쓴다
+- **민원 상태 자체** — 어디에도 "현재 보고 있는 민원의 상태"를 복제해 들고 있지 않는다. 화면에 그릴 때마다 DB 값을 그대로 쓴다
 
 ### `미확인 → 확인` 자동전환과 세션의 관계
 
@@ -216,8 +227,8 @@ DB(영속)와 휘발성 상태의 경계를 구현 전에 못박는다. 로그�
 
 ```python
 class DatabaseManager:
-    def __init__(self, db_path: str = "data/app.db"):
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+    def __init__(self, dsn: str = os.environ["DATABASE_URL"]):
+        self.pool = psycopg_pool.ConnectionPool(dsn)   # 워커마다 커넥션 풀
         self.conn.execute("PRAGMA foreign_keys = ON")
 
     # --- 학교 / 도메인 / 관리자 코드 (시드 전용) ---
@@ -584,10 +595,10 @@ class AuthManager:
         if st.button("로그인", type="primary"):
             user = self.db.authenticate_user(email, password)
             if user:
-                st.session_state.logged_in = True
-                st.session_state.user_id = user["id"]
-                st.session_state.school_id = user["school_id"]
-                st.session_state.role = user["role"]
+                session_id = redis_session.create(
+                    user_id=user["id"], school_id=user["school_id"], role=user["role"]
+                )
+                response.set_cookie("sid", session_id, httponly=True, samesite="lax")
                 st.rerun()
             else:
                 st.error("이메일 또는 비밀번호가 올바르지 않습니다")
@@ -613,17 +624,17 @@ class AuthManager:
             try:
                 self.db.create_user(school["id"], email, password, role)
                 st.success(f"{school['name']} 가입 완료! 로그인해주세요")
-            except sqlite3.IntegrityError:
+            except psycopg.errors.UniqueViolation:
                 st.error("이미 존재하는 이메일입니다")
 
     def require_auth(self):
-        if not st.session_state.get('logged_in'):
+        if not request.session:      # 쿠키의 sid로 Redis 조회, 없으면
             self.show_auth_page()
             st.stop()
 
     def logout(self):
         for key in ['logged_in', 'user_id', 'school_id', 'role']:
-            st.session_state.pop(key, None)
+            redis_session.delete(session_id)   # Redis에서 세션 삭제 + 쿠키 만료
         st.rerun()
 ```
 
@@ -636,10 +647,10 @@ class AuthManager:
 ### app.py — 진입점 & 역할 분기
 
 ```python
-st.session_state.auth.require_auth()
-if st.session_state.role == "student":
+# 라우터 의존성으로 인증을 강제한다
+if user.role == "student":
     render_student_view()
-elif st.session_state.role == "admin":
+elif user.role == "admin":
     render_admin_view()
 ```
 
@@ -703,9 +714,10 @@ elif st.session_state.role == "admin":
 **흐름**:
 1. `db.get_complaint_stats(school_id)` → 7개 통계 카드
 2. 필터 탭 → `db.list_complaints(school_id, status=selected)`
-3. 행 클릭 → `st.session_state.selected_complaint_id` 설정 **+ 동시에** `ComplaintService.open_detail(id, school_id)` 호출 (미확인이면 확인으로 전환) → `st.rerun()`
+3. 행 클릭 → `POST /admin/complaints/{id}/open` 호출. 상세를 받아오면서 미확인이면 확인으로 전환된다.
+   응답으로 모달을 채운다 (조회처럼 보이지만 부작용이 있어 `GET`이 아니라 `POST`다 — 프리페치로 열지도 않은 민원이 확인 처리되는 것을 막는다)
 4. 상세 화면에서 현재 상태를 다시 읽어 `확인`이면 수락/보류/거절 버튼, `처리중`이면 "해결 완료" 버튼만 노출
-5. 보류 버튼 → 모달 열기(`st.session_state.hold_modal_open = True`) → 제출 → `ComplaintService.hold(id, school_id, admin_user_id, reason)` → 성공 시 모달 닫고 `st.rerun()`
+5. 보류 버튼 → 사유 입력 모달 → 제출 시 `POST /admin/complaints/{id}/hold` (body에 `reason`) → 성공 시 모달 닫고 목록·상세 갱신. 사유가 비면 전송하지 않는다
 6. 수락/해결완료/거절 버튼 → 각각 `accept()`/`resolve()`/`reject()` 호출 → `st.rerun()`
 7. 코멘트 입력창은 상태와 무관하게 항상 표시 → 제출 시 `ComplaintService.add_comment()` 호출
 8. 목록/상세 어디에도 "철회" 버튼은 없음 (학생 전용)
@@ -884,7 +896,7 @@ def test_accept_fails_across_schools():
 
 - Bedrock 응답 시간: 왕복당 2~4초
 - 대화 왕복 수: 보통 1~3회
-- 게시판/통계/코멘트 조회: < 50ms (SQLite, 학교당 민원 수 적음)
+- 게시판/통계/코멘트 조회: < 50ms (PostgreSQL, 학교당 민원 수 적음)
 
 ---
 

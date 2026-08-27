@@ -419,3 +419,26 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501
 - `docs/*_v1.md` — 배너에서 트랙 서술 제거, "v1 설계이고 현재 정본은 .kiro"로 정리
 
 **남은 것**: HTTPS가 없으면 쿠키에 `Secure`를 못 단다. EC2 IP로 http 접속이면 `SameSite=Lax`로 가고 데모 범위에서 감수한다.
+
+## [2026-08-27] 표준 웹서버 구성으로 재편 — PostgreSQL + Redis + 워커 여러 개
+Streamlit 제약이 풀리면서 아키텍처를 흔한 웹 서버 형태로 다시 잡았다. **중앙 데이터스토어 + 백엔드 워커 N개.**
+
+**왜 워커를 여럿 두나**: LLM 호출이 수 초씩 걸린다. 워커가 하나면 한 사람이 민원을 정제하는 동안 다른 사람의 게시판 조회까지 막힌다. 심사위원 여러 명이 동시에 만지는 데모에서 이건 그대로 드러난다.
+
+**그 결정이 나머지를 전부 정했다.** 워커가 여럿이면 프로세스 메모리에 상태를 둘 수 없다 — 다음 요청이 다른 워커로 가기 때문이다.
+- **세션 → Redis.** 메모리에 두면 요청마다 로그인이 풀렸다 붙었다 한다.
+- **SQLite → PostgreSQL.** 파일 락에 기대는 구조로는 여러 프로세스가 동시에 못 붙는다.
+- **전이 검증 → `UPDATE ... WHERE status=<전제>`.** 조회 후 판정하면 두 관리자가 동시에 눌렀을 때 각자 다른 워커에서 같은 값을 읽어 둘 다 통과한다. WHERE에 넣으면 DB가 직렬화한다.
+- **목록·통계·코멘트는 어디에도 캐시하지 않는다.**
+
+**DB 선택 — MySQL로 썼다가 PostgreSQL로 돌렸다.** 사용자가 "redis mysql이든"이라 한 걸 그대로 받아썼는데, 이 프로젝트엔 Postgres가 맞다. `refined_json`이 JSON 컬럼이고 접수 경로의 핵심인데 `JSONB`는 이진 저장이라 `refined_json->>'category'`로 필드를 직접 읽는다. v1 문서도 이미 PostgreSQL이었다. 스키마 전체를 PG 문법으로 옮겼다(`SERIAL`·`TIMESTAMPTZ`·`CHECK` 제약·`JSONB`·테이블 밖 `CREATE INDEX`).
+
+**Redis는 부활한 것이다.** v1(FastAPI+React)에 세션·작업본 저장소로 있다가, Streamlit으로 가면서 `st.session_state`가 그 역할을 대신해 스택에서 빠졌었다. Streamlit을 걷어내니 그 자리가 다시 빈다.
+
+**초안 소유권을 Redis가 쥔다.** 검증에서 "`draft_key`는 소유권 검증이 구조적으로 불가능하다"고 남겼던 항목이 해소됐다 — `draft:{key}:owner`를 두고 draft 엔드포인트마다 세션과 대조한다. `complaint_conversations`에 영속 컬럼을 늘리지 않은 이유는 초안이 접수 전 임시 데이터라 Redis의 수명과 맞기 때문이다.
+
+**CORS가 사라졌다.** FastAPI가 정적 프론트까지 서빙하므로 동일 출처다. `app.mount`는 API 라우터 **뒤에** 등록해야 한다 — 순서가 바뀌면 `/api/...`가 정적 핸들러에 먹힌다.
+
+**고친 문서**: `.kiro`의 requirements(제약·스택·아키텍처 도식·상태 저장 규칙·스키마 전체)·design(도식·커넥션·AuthManager·UI 흐름)·tasks(의존성·실행·배포), `KIRO_SPEC.md`, `docs/api-contract.md`(아키텍처 전제·Redis 키·소유권 검증·동시성 근거·백엔드 계층·미결 항목).
+
+**루트 중복 파일 정리.** 팀원이 `connectionTest/`의 파일 6개를 저장소 루트에도 push했는데, 루트 쪽은 `BUCKET_NAME = "your-team-bucket-name-here"` 플레이스홀더 원본이고 `connectionTest/`에 실제 값(`hackathon-e1-t01-docs`)이 들어 있었다. 대회 가이드가 경고한 "새 코드가 실제 값을 플레이스홀더로 덮어쓰는" 상황이라, 루트 사본을 지웠다. 잃는 내용 없음.

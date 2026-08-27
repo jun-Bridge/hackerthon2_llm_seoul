@@ -34,16 +34,16 @@ AWS Bedrock API 호출이 성공하는지, 도구 호출을 지원하는지 검�
 
 ---
 
-### TASK-003: 프로젝트 구조 생성 및 SQLite 스키마 초기화
+### TASK-003: 프로젝트 구조 생성 및 PostgreSQL 스키마 초기화
 **Depends on**: -
 **Status**: OPEN
 
 **Description**:
-웹 앱 디렉토리 구조와 SQLite 스키마(학교/도메인/관리자코드/계정/민원/대화)를 생성합니다.
+웹 앱 디렉토리 구조와 PostgreSQL 스키마(학교/도메인/관리자코드/계정/민원/대화)를 생성합니다.
 
 **Acceptance Criteria**:
 - [ ] `app.py`, `lib/`, `pages/`, `data/` 생성
-- [ ] `requirements.txt`: `fastapi`, `uvicorn`, `boto3`, `bcrypt`
+- [ ] `requirements.txt`: `fastapi`, `uvicorn[standard]`, `psycopg[binary,pool]`, `redis`, `boto3`, `bcrypt`
 - [ ] `.gitignore`에 `data/*.db`, `*.pem` 추가
 - [ ] `init_db.py` 실행 시 5개 테이블 생성: `schools`, `admin_codes`, `users`, `complaints`, `complaint_conversations`, `complaint_comments`
 - [ ] `complaints.status` CHECK 제약이 `('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')` 7종을 포함
@@ -57,12 +57,12 @@ AWS Bedrock API 호출이 성공하는지, 도구 호출을 지원하는지 검�
 
 **init_db.py**:
 ```python
-import sqlite3
+import PostgreSQL3
 from pathlib import Path
 
 def init_database():
     Path("data").mkdir(exist_ok=True)
-    conn = sqlite3.connect("data/app.db")
+    conn = PostgreSQL3.connect("data/app.db")
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS schools (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +153,7 @@ if __name__ == "__main__":
 **Implementation**:
 ```python
 # seed_schools.py
-import sqlite3
+import PostgreSQL3
 
 SCHOOLS = [
     {"name": "조선대학교", "domain": "chosun.ac.kr", "codes": ["CSU-ADM-01", "CSU-ADM-02"]},
@@ -161,7 +161,7 @@ SCHOOLS = [
 ]
 
 def seed():
-    conn = sqlite3.connect("data/app.db")
+    conn = PostgreSQL3.connect("data/app.db")
     for school in SCHOOLS:
         cursor = conn.execute(
             "INSERT OR IGNORE INTO schools (name, email_domain) VALUES (?, ?)",
@@ -528,8 +528,8 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 
 **Acceptance Criteria**:
 - [ ] 서비스 개요 (학교별 익명 민원 + AI 대화형 정제)
-- [ ] 기술 스택 (Bedrock, FastAPI, SQLite)
-- [ ] 실행 방법: `init_db.py` → `seed_schools.py` → `uvicorn app.main:app --port 8501`
+- [ ] 기술 스택 (Bedrock, FastAPI, PostgreSQL, Redis)
+- [ ] 실행 방법: PostgreSQL·Redis 기동 → `init_db.py` → `seed_schools.py` → `uvicorn app.main:app --port 8501 --workers 4`
 - [ ] 데모 계정/도메인/코드 안내
 - [ ] 팀 정보
 
@@ -543,7 +543,7 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 **Status**: OPEN
 
 **Description**:
-SQLite 데이터베이스를 주기적으로 백업합니다. (기존 설계 그대로 유지)
+PostgreSQL 데이터베이스를 주기적으로 백업합니다. (기존 설계 그대로 유지)
 
 **Acceptance Criteria**:
 - [ ] `backup_db.py`: 타임스탬프 파일명으로 `data/backups/`에 복사
@@ -562,7 +562,7 @@ SQLite 데이터베이스를 주기적으로 백업합니다. (기존 설계 그
 EC2에서 한 번에 배포하는 스크립트를 작성합니다.
 
 **Acceptance Criteria**:
-- [ ] `deploy.sh`: pip install → `init_db.py` → `seed_schools.py` → nohup uvicorn 실행
+- [ ] `deploy.sh`: PostgreSQL·Redis 기동 확인 → pip install → `init_db.py` → `seed_schools.py` → nohup uvicorn 실행
 - [ ] Instance Profile 인증이므로 AWS 자격증명 설정 단계 없음
 - [ ] 접속 주소와 로그 확인 명령 출력
 
@@ -578,7 +578,7 @@ pip3 install -r requirements.txt
 python3 init_db.py
 python3 seed_schools.py
 mkdir -p data
-nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8501 \
+nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8501 --workers 4 \
   > server.log 2>&1 < /dev/null &
 echo "배포 완료! 접속 주소: http://$(curl -s ifconfig.me):8501"
 echo "로그 확인: tail -f server.log"

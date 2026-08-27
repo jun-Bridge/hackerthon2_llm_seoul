@@ -18,17 +18,42 @@
 
 - **LLM**: AWS Bedrock (`global.anthropic.claude-sonnet-5`), 도구 호출로 민원 분류+변환
 - **배포**: EC2 (팀 키 `hackathon-e1-t01-key.pem`), **8501 포트**
-- **DB**: SQLite (계정/학교/민원 저장)
 
-> **프론트엔드는 제약이 아니다.** 대회 가이드는 함께 받은 Streamlit 코드(`app.py` 등 5개)를
+> **프론트엔드도 DB도 제약이 아니다.** 대회 가이드는 함께 받은 Streamlit 코드(`app.py` 등 5개)를
 > "인프라와 Kiro 연동이 정상 동작하는지 확인하기 위한 **예시/테스트 코드**"라고 명시한다.
 > 8501은 그 예시를 띄우라고 알려준 포트일 뿐, 거기 무엇이 뜨는지는 정해져 있지 않다.
->
-> **그래서 8501에 일반 웹서버(FastAPI + uvicorn)를 올린다.**
-> `uvicorn app.main:app --host 0.0.0.0 --port 8501`
->
-> 이 판단으로 Streamlit의 제약 세 가지가 사라진다 —
-> 새로고침 시 로그인 유실, 서버에서 클라이언트로 밀어주기 불가, 상호작용마다 전체 재실행.
+
+### 기술 스택
+
+**중앙 데이터스토어 + 여러 백엔드 워커**라는 흔한 웹 서버 구성으로 간다.
+
+| 층 | 선택 | 왜 |
+|---|---|---|
+| 웹 서버 | FastAPI + uvicorn, **8501 포트** | 표준 HTTP. 프론트 정적 파일도 같은 서버가 서빙 |
+| 영속 저장 | **PostgreSQL** | 여러 워커가 동시에 붙는다. 파일 락에 기대는 SQLite로는 안 된다 |
+| 휘발 저장 | **Redis** | 로그인 세션·초안 상태. 워커 사이에 공유되어야 한다 |
+| LLM | AWS Bedrock | 도구 호출 |
+
+```
+      브라우저
+         │  :8501
+    ┌────▼─────┐
+    │  uvicorn │  워커 N개 (프로세스 여러 개)
+    └────┬─────┘
+         │
+   ┌─────┴─────┐
+   │           │
+┌──▼───┐   ┌───▼───┐
+│  PG  │   │ Redis │   ← 중앙. 모든 워커가 같은 것을 본다
+└──────┘   └───────┘
+```
+
+**왜 워커를 여럿 두나**: LLM 호출이 수 초씩 걸린다. 워커가 하나면 한 사람이 민원을 정제하는
+동안 다른 사람의 게시판 조회까지 막힌다. 워커를 늘리면 그 대기가 서로를 막지 않는다.
+
+**그래서 상태를 프로세스 메모리에 둘 수 없다.** 다음 요청이 다른 워커로 갈 수 있어서,
+로그인 세션이 메모리에 있으면 요청마다 로그인이 풀렸다 붙었다 한다.
+**세션은 반드시 Redis에, 확정된 데이터는 반드시 PostgreSQL에** 둔다.
 
 ---
 
@@ -184,72 +209,105 @@ schools (학교)
 
 **왜 `submitted_by_user_id`만 SET NULL이고 나머지는 CASCADE인가**: 민원 자체(내용·상태·대화·코멘트)는 학교의 공공 기록이라 작성자가 탈퇴해도 보존해야 한다. 반면 학교나 민원이 삭제되면 그에 종속된 하위 데이터는 함께 사라지는 게 맞다 (고아 레코드 방지).
 
-### SQLite Schema
+### PostgreSQL Schema
 ```sql
 CREATE TABLE schools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    email_domain TEXT UNIQUE NOT NULL, -- 예: 'chosun.ac.kr' — 가입 시 이 값으로 학교를 자동 매칭
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
+    email_domain VARCHAR(255) UNIQUE NOT NULL, -- 예: 'chosun.ac.kr' — 가입 시 이 값으로 학교를 자동 매칭
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE admin_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     school_id INTEGER NOT NULL,
-    code TEXT NOT NULL,                -- 데모용 임의 문자열, 학교당 여러 개 시드 가능
-    is_used BOOLEAN NOT NULL DEFAULT 0, -- 1회성으로 쓸지는 시드 정책에 따름 (기본: 재사용 허용)
+    code VARCHAR(64) NOT NULL,                -- 데모용 임의 문자열, 학교당 여러 개 시드 가능
+    is_used BOOLEAN NOT NULL DEFAULT FALSE, -- 1회성으로 쓸지는 시드 정책에 따름 (기본: 재사용 허용)
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 
 CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     school_id INTEGER NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('student', 'admin')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(16) NOT NULL CHECK (role IN ('student','admin')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 
 CREATE TABLE complaints (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     school_id INTEGER NOT NULL,
     submitted_by_user_id INTEGER,      -- 내부 추적용, UI에는 절대 노출 안 함
-    category TEXT NOT NULL,
-    location TEXT NOT NULL,
-    refined_title TEXT NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    refined_title VARCHAR(255) NOT NULL,
     refined_body TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT '미확인'
-        CHECK(status IN ('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    confirmed_at TIMESTAMP,             -- 관리자가 처음 열람한 시각 (미확인→확인 자동전환 시점). NULL이면 아직 미확인
+    status VARCHAR(16) NOT NULL DEFAULT '미확인'
+        CHECK (status IN ('미확인','확인','처리중','해결완료','보류','거절','철회')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    confirmed_at TIMESTAMPTZ,             -- 관리자가 처음 열람한 시각 (미확인→확인 자동전환 시점). NULL이면 아직 미확인
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
     FOREIGN KEY (submitted_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- 학생-AI 대화 왕복 기록. 접수 전(정제 중)과 접수 후 모두 여기 남는다.
 CREATE TABLE complaint_conversations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     complaint_id INTEGER,              -- 접수 전에는 NULL (아직 complaint row가 없음), 접수 시 연결
-    draft_key TEXT NOT NULL,           -- 접수 전 임시 식별자 (세션 UUID). 접수되면 complaint_id로 대체
-    role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
+    draft_key CHAR(36) NOT NULL,           -- 접수 전 임시 식별자 (세션 UUID). 접수되면 complaint_id로 대체
+    role VARCHAR(16) NOT NULL CHECK (role IN ('student','assistant')),
     content TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    refined_json JSONB,                -- AI가 확정안을 낸 턴에만 채워진다. 되묻는 턴은 NULL
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
 );
+CREATE INDEX idx_conv_draft ON complaint_conversations(draft_key);
 
 -- 관리자 코멘트. 보류 전환 시 1건 필수 생성, 그 외에는 언제든 추가 가능한 누적 로그.
 CREATE TABLE complaint_comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     complaint_id INTEGER NOT NULL,
     author_user_id INTEGER,            -- 작성한 관리자. 게시판 표시는 "관리자"로만 뭉뚱그림
     content TEXT NOT NULL,
-    is_hold_reason BOOLEAN NOT NULL DEFAULT 0, -- 보류 전환 시 필수로 남긴 코멘트인지 표시
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_hold_reason BOOLEAN NOT NULL DEFAULT FALSE, -- 보류 전환 시 필수로 남긴 코멘트인지 표시
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE,
     FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 ```
+
+```sql
+-- Bedrock 호출 기록. 대회 심사(US-5.1)용.
+CREATE TABLE bedrock_logs (
+    id SERIAL PRIMARY KEY,
+    school_id INTEGER,
+    called_at TIMESTAMPTZ DEFAULT NOW(),
+    model_id VARCHAR(128) NOT NULL,
+    is_complete BOOLEAN NOT NULL,        -- 도구 호출이 성사됐는지
+    latency_ms INTEGER,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    error TEXT
+);
+CREATE INDEX idx_bedrock_called ON bedrock_logs(called_at DESC);
+```
+
+**`JSONB`를 쓰는 이유**: 접수 시점에 마지막 확정안을 꺼내는 것이 핵심 경로다.
+`JSONB`는 이진 저장이라 파싱이 없고 `refined_json->>'category'`로 필드를 직접 읽을 수 있다.
+
+**`refined_json` 설계 노트**: AI 발화는 `content`에 `"[정리 완료] {제목}"` 문자열로만 남아서
+`category`·`location`·`refined_body`를 복원할 방법이 없다. 확정 턴에 JSON을 함께 저장해야
+접수 시점에 서버가 꺼내 쓸 수 있다. **이 컬럼이 "확정됐는지" 표시도 겸한다** —
+`refined_json IS NOT NULL`인 행이 없으면 아직 되묻는 중이다.
+
+브라우저가 보낸 확정안을 그대로 저장하지 않는 이유는, 그러면 화면에서 값을 바꿔 보낼 수 있어
+**AI가 확정한 것과 접수된 것이 달라지기 때문**이다.
+
+**`bedrock_logs` 설계 노트**: 프롬프트와 응답 본문은 저장하지 않는다. 민원 내용이 로그에
+중복 보관되면 익명성 관리 대상이 두 곳으로 늘어난다. 심사에 필요한 것은 "호출이 실제로
+일어났다"는 사실과 지연·토큰이지 내용이 아니다.
 
 **익명성 설계 노트**: `submitted_by_user_id`는 어뷰징 대응(동일 학생 반복 신고 등)을 위해 내부적으로만 보관하고, 학생 게시판·관리자 화면 어디에도 조회/표시하지 않는다. 완전 삭제를 원하면 아예 컬럼을 없애도 되지만, 계정 탈퇴 시 CASCADE 정리를 고려해 `ON DELETE SET NULL`로 둔다.
 
@@ -259,44 +317,40 @@ CREATE TABLE complaint_comments (
 
 ---
 
-## Session Container Rules (서버 세션 · 클라이언트 상태)
+## 상태를 어디에 두나
 
-로그인 세션은 **HttpOnly 쿠키 + 서버 저장소**다. 브라우저에는 세션 id만 있고 실체는 서버에 있어서
-**새로고침해도 로그인이 유지된다.** 이 점이 Streamlit 전제였던 이전 판과 결정적으로 다르다.
+워커가 여럿이라 **프로세스 메모리는 상태를 둘 곳이 아니다.** 세 곳으로 나눈다.
 
-DB(영속)와 휘발성 상태의 경계는 여전히 못박아야 한다 — 무엇이 새로고침을 견디고 무엇이 사라지는지.
+### PostgreSQL — 확정된 것
 
-### 컨테이너에 들어가는 것 (휘발성 — 탭 닫으면 소멸)
+| 무엇 | 왜 여기 |
+|---|---|
+| 계정·학교·관리자 코드 | 영속 |
+| 접수된 민원, 상태, 코멘트 | 학교의 공공 기록 |
+| 대화 이력 (`complaint_conversations`) | 접수 전 초안도 여기 남긴다 — 새로고침에 사라지면 안 된다 |
 
-| 키 | 내용 | 생성 시점 | 소멸 시점 |
-|---|---|---|---|
-| `logged_in` | 로그인 여부 (bool) | 로그인 성공 | 로그아웃, 탭 종료 |
-| `user_id`, `school_id`, `role` | 인증 결과 3종 | 로그인 성공 | 로그아웃 |
-| `draft_key` | 접수 전 대화 임시 식별자 (uuid4) | 학생이 새 민원 작성 시작 | 정식 접수 완료 시 (새 uuid로 재발급) |
-| `preview_result` | AI가 반환한 최종 확정안 (미리보기용) | `is_complete=True` 응답 수신 | 접수 완료 또는 재작성 시작 |
-| `selected_complaint_id` | 관리자가 상세 화면을 연 민원 ID | 목록 행 클릭 | 상세 화면 닫기 |
-| `withdraw_target_id` | 철회 확인 폼이 열린 민원 ID | 철회 버튼 클릭 | 확인/취소 |
+### Redis — 살아 있는 동안만
 
-### 컨테이너에 두지 않는 것 (반드시 DB로)
+| 키 | 내용 | 사라지는 때 |
+|---|---|---|
+| `sess:{session_id}` | 로그인 세션 — `user_id`·`school_id`·`role` | 로그아웃, TTL 만료 |
+| `draft:{draft_key}:owner` | 초안 소유자 `user_id` | 접수 완료, TTL 만료 |
 
-- **대화 전체**: `complaint_conversations`에 매 턴 즉시 기록. 세션에는 `draft_key`만 들고 다니고, 화면 렌더링 시 `db.get_conversation(draft_key)`로 매번 다시 읽는다. 이렇게 해야 새로고침해도 대화가 안 사라진다.
-- **민원 목록/통계**: 매 렌더링마다 `db.list_complaints()`, `db.get_complaint_stats()`로 다시 조회한다. 세션에 캐시하지 않는다 (다른 사용자의 변경이 반영 안 되는 사고를 막기 위해 — 새로고침 기반 갱신이라는 설계 전제와도 맞음).
-- **코멘트 이력**: `complaint_comments`에 즉시 기록, 상세 화면 열 때마다 재조회.
+**로그인 세션이 Redis에 있어서 새로고침해도 로그인이 유지된다.** 브라우저에는 HttpOnly
+쿠키로 세션 id만 있고, 어느 워커가 받든 같은 Redis를 보므로 결과가 같다.
 
-### 왜 이 경계가 중요한가
+**`draft:{key}:owner`는 초안 소유권 검증용이다.** 이게 없으면 남의 `draft_key`를 아는 사람이
+그 대화를 읽고 이어 쓸 수 있다.
 
-1. **새로고침 안전성**: `st.rerun()`이나 브라우저 새로고침이 일어나도 DB에 있는 것은 그대로고, 세션에만 있던 것(예: 아직 접수 안 한 미리보기)은 사라진다. 이 손실이 "안전한 손실"이 되도록 — 접수 완료된 데이터는 절대 세션에만 존재해서는 안 된다.
-2. **탭/계정 간 누수 방지**: 세션은 탭(브라우저 세션) 단위로 격리되므로, 같은 관리자가 탭을 두 개 열어도 `selected_complaint_id`는 각자 따로 논다. 반대로 DB 상태(민원 상태, 코멘트)는 탭과 무관하게 전역으로 공유되어야 하므로 세션에 캐시하면 안 된다.
-3. **탈퇴/로그아웃 시 정리가 단순해진다**: 세션에 있는 것은 `logout()`이 키를 지우는 것만으로 끝난다. DB에 있는 것(민원, 대화, 코멘트)은 계정 탈퇴 시 CASCADE/SET NULL 규칙(ER 관계도 참고)이 처리하며, 세션 정리와는 별개 경로다.
+### 브라우저 — 화면에만 관련된 것
 
-### draft_key 수명 규칙
+입력 중인 텍스트, 열어둔 모달, 펼친 토글, 선택한 필터 탭.
+**새로고침에 사라져도 되는 것만** 여기 둔다.
 
-`draft_key`는 "아직 접수되지 않은 대화"를 식별하는 유일한 키라서 별도로 정리한다:
+### 어디에도 캐시하지 않는 것
 
-- 학생이 "새 민원 작성"을 시작할 때만 새로 발급된다 (재발급 트리거는 접수 완료, 또는 명시적 "새로 작성" 버튼)
-- 같은 `draft_key`로 여러 번 대화를 주고받아도 계속 누적된다 (되묻기 왕복 전체가 하나의 draft)
-- 접수 완료 시 해당 draft의 모든 `complaint_conversations` 행이 새 `complaint_id`와 연결되고, 세션의 `draft_key`는 새 uuid로 교체된다 — 이전 draft를 재사용해 다음 민원과 대화가 섞이는 것을 방지
-- 학생이 대화 중간에 탭을 닫고 다시 로그인하면 이전 `draft_key`는 세션에서 사라지고 복구되지 않는다 (미접수 대화는 유실 허용 — Out of Scope의 "임시저장" 항목 참고)
+**민원 목록·통계·코멘트는 매번 다시 읽는다.** 워커가 여럿이고 다른 사용자가 계속 바꾸므로,
+어디든 캐시하면 누군가는 낡은 것을 본다.
 
 ---
 
@@ -304,7 +358,9 @@ DB(영속)와 휘발성 상태의 경계는 여전히 못박아야 한다 — �
 
 ### M0 — 대회 환경 검증 (기존과 동일)
 - [ ] Bedrock API 호출 성공
+- [ ] PostgreSQL·Redis 기동 및 접속 확인
 - [ ] EC2 인스턴스 SSH 접속 및 8501 포트로 서버 구동 (`uvicorn --port 8501`)
+- [ ] 워커 2개 이상으로 띄워도 로그인이 유지된다 (세션이 Redis에 있으므로)
 - [ ] `requirements.txt` 패키지 설치 완료
 
 ### M1 — 계정 & 학교 시스템
@@ -361,13 +417,13 @@ DB(영속)와 휘발성 상태의 경계는 여전히 못박아야 한다 — �
 ### 필수 제약
 - **LLM**: AWS Bedrock, `global.anthropic.claude-sonnet-5` (리전 자동 감지, Instance Profile 인증)
 - **배포**: EC2
-- **DB**: SQLite (`data/app.db`)
+- **DB**: PostgreSQL + Redis
 - **비밀번호**: bcrypt 해싱
 
 ### 권장 사항
 - Bedrock 도구 호출(tool use)로 카테고리를 enum으로 강제 — 자유 텍스트 분류 시 오분류/오타 위험
 - CloudWatch Logs로 Bedrock 호출 모니터링
-- SQLite 백업 스크립트 (cron)
+- DB 백업 스크립트 (cron)
 
 ---
 

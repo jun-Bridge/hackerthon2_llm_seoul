@@ -28,8 +28,23 @@ HTTP 경계로 옮긴 것이다. 기능 자체가 궁금하면 그쪽을 본다.
 
 ### 인증
 
-**HttpOnly 쿠키 세션.** 로그인하면 서버가 `Set-Cookie`로 세션 id를 내려주고,
-이후 모든 요청에 자동으로 실린다. 프론트는 토큰을 저장하지도 붙이지도 않는다.
+**HttpOnly 쿠키 + Redis 세션.** 로그인하면 서버가 세션을 Redis에 만들고 `Set-Cookie`로
+세션 id를 내려준다. 이후 모든 요청에 자동으로 실린다. 프론트는 토큰을 저장하지도 붙이지도 않는다.
+
+**세션 실체가 Redis에 있어야 하는 이유**: 워커가 여럿이다. 프로세스 메모리에 두면 다음 요청이
+다른 워커로 갈 때 로그인이 풀린다. Redis에 있으면 어느 워커가 받든 같고, 새로고침해도 유지된다.
+
+```
+Redis   sess:{session_id}          → { user_id, school_id, role }   TTL 있음
+        draft:{draft_key}:owner    → user_id                        TTL 있음
+```
+
+**`draft:{key}:owner`가 초안 소유권을 만든다.** `complaint_conversations`에 작성자 컬럼이 없어서
+이게 없으면 남의 `draft_key`를 아는 사람이 그 대화를 읽고 이어 쓸 수 있다.
+draft 엔드포인트(#8~#11)는 전부 이 값을 세션의 `user_id`와 대조하고, 어긋나면 403.
+
+**그 외에는 아무것도 캐시하지 않는다.** 민원 목록·통계·코멘트는 매번 PostgreSQL에서 다시 읽는다.
+다른 사용자가 계속 바꾸는 데이터라 캐시하면 누군가는 낡은 것을 본다.
 
 ```js
 fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙이면 된다
@@ -37,6 +52,8 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 
 - 상태를 바꾸는 요청(POST/PATCH/DELETE)에는 `X-Requested-With: fetch` 헤더를 붙인다. CSRF 대비.
 - 세션이 없거나 만료면 **401**. 프론트는 401을 받으면 로그인 화면으로 보낸다.
+- **프론트를 같은 서버(8501)가 서빙하므로 동일 출처다. CORS 설정이 필요 없다.**
+- HTTPS가 없으면 쿠키에 `Secure`를 달 수 없다. EC2 IP로 http 접속이면 `SameSite=Lax`로 간다.
 
 ### 학교 격리 — 프론트가 신경 쓰지 않는다
 
@@ -120,9 +137,12 @@ interface ConversationTurn {
 
 ## 1. 연결부 한눈에
 
-> **정본에 없는 것 두 가지를 이 계약서가 요구한다** — `complaint_conversations.refined_json` 컬럼과
-> `bedrock_logs` 테이블. 둘 다 없으면 구현이 불가능하다(2.2 #11 · 2.4 #23).
-> `.kiro` 스키마에 반영해야 한다.
+> **아키텍처 전제** — FastAPI(uvicorn) 워커 여러 개가 8501 포트에 뜨고,
+> **PostgreSQL**(확정 데이터)과 **Redis**(세션·초안 소유권)를 공유한다.
+> 프론트 정적 파일도 같은 서버가 서빙하므로 CORS가 없다.
+>
+> 워커가 여럿이라는 사실이 이 계약의 여러 곳을 정한다 — 세션이 Redis에 있어야 하는 이유,
+> 전이 검증이 `UPDATE ... WHERE`인 이유, 목록·통계를 캐시하지 않는 이유가 전부 여기서 나온다.
 
 23개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
@@ -289,19 +309,20 @@ export async function startDraft() { ... }   // → { draft_key }
 ```python
 @router.post("/drafts", status_code=201)
 def create_draft(user = Depends(current_user)) -> DraftOut:
-    return DraftOut(draft_key=str(uuid4()))   # DB에 아무것도 안 쓴다
+    key = str(uuid4())
+    redis.setex(f"draft:{key}:owner", DRAFT_TTL, user.id)   # 소유권 등록
+    return DraftOut(draft_key=key)                          # PostgreSQL에는 아직 안 쓴다
 ```
 
 **"새 민원 작성"을 누를 때 한 번.** 이 키가 이후 대화 전체를 묶는다.
 행은 첫 메시지에서 생기므로 여기서는 키만 발급한다.
 
-> **`draft_key`는 소유권을 검증할 수 없다.** `complaint_conversations`에 `user_id`가 없어서
-> 남의 키를 알면 그 초안 대화를 읽고 이어 쓸 수 있다. uuid4라 추측은 사실상 불가능하지만
-> **구조적으로 막혀 있지는 않다.**
->
-> 1차에서는 이대로 간다(초안은 접수 전 임시 데이터, 데모 범위). 막으려면
-> `complaint_conversations`에 `owner_user_id`를 넣고 draft 접근마다 세션과 대조한다.
-> 접수된 민원은 `school_id`·`submitted_by_user_id`로 정상 보호된다 — 이 이야기는 초안에만 해당한다.
+**소유권은 Redis가 쥔다.** 키를 발급하면서 `draft:{draft_key}:owner = user_id`를 함께 쓴다.
+이후 draft 엔드포인트는 전부 이 값을 세션의 `user_id`와 대조하고, 어긋나면 **403**이다.
+
+`complaint_conversations`에 작성자 컬럼이 없어 DB만으로는 검증이 안 되는데, 초안은 접수 전
+임시 데이터라 영속 컬럼을 늘리기보다 Redis에 수명을 맞추는 편이 맞다.
+접수되는 순간 소유권은 `complaints.submitted_by_user_id`로 넘어간다.
 
 ---
 
@@ -315,6 +336,7 @@ export async function sendMessage(draftKey, message) { ... }   // → RefineResu
 @router.post("/drafts/{draft_key}/messages")
 def send_message(draft_key: str, body: SendMessageIn,
                  user = Depends(current_user)) -> RefineResultOut:
+    require_draft_owner(draft_key, user.id)      # Redis 대조, 어긋나면 403
     return service.send_message(draft_key, body.message)
 
 # app/services/complaint_service.py
@@ -386,9 +408,13 @@ export async function submitDraft(draftKey) { ... }   // → { complaint_id, nex
 ```python
 @router.post("/drafts/{draft_key}/submit", status_code=201)
 def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
+    require_draft_owner(draft_key, user.id)
     refined = db.get_last_refined(draft_key)      # ★ 아래 설명 — 없으면 409
     cid = service.submit(user.school_id, user.id, draft_key, refined)
-    return SubmitOut(complaint_id=cid, next_draft_key=str(uuid4()))
+    redis.delete(f"draft:{draft_key}:owner")      # 닫힌 초안 정리
+    next_key = str(uuid4())
+    redis.setex(f"draft:{next_key}:owner", DRAFT_TTL, user.id)
+    return SubmitOut(complaint_id=cid, next_draft_key=next_key)
 
 # db.get_last_refined
 #   SELECT refined_json FROM complaint_conversations
@@ -400,9 +426,9 @@ def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
 #   ② complaint_conversations UPDATE — 그 draft_key의 모든 행에 complaint_id 채움
 ```
 
-> ### ⚠ 스키마 한 컬럼이 필요하다
+> ### `refined_json`이 하는 일  *(정본 스키마에 반영됨)*
 >
-> **`complaint_conversations`에 `refined_json TEXT` 컬럼을 추가해야 한다.**
+> **`complaint_conversations.refined_json JSONB`**
 >
 > 정본 스키마에서 AI 발화는 `content`에 `"[정리 완료] {제목}"` 문자열로만 남는다.
 > **`category`·`location`·`refined_body`가 어디에도 저장되지 않는다.**
@@ -413,6 +439,8 @@ def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
 >
 > 이 컬럼이 `is_complete` 여부 표시도 겸한다 —
 > `refined_json IS NOT NULL`인 턴이 하나도 없으면 아직 확정 전이므로 `409`.
+>
+> `JSONB`라서 `refined_json->>'category'`로 필드를 직접 읽는다. 파싱 단계가 없다.
 
 | 파라미터 | 타입 | 설명 |
 |---|---|---|
@@ -602,8 +630,11 @@ def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
 
 **전부 `200 Complaint`(갱신된 상태)를 돌려준다.** 프론트는 응답으로 화면을 다시 그린다.
 
-**`WHERE status=<전제>`가 전이 검증이다.** 별도 조회 후 판정하지 않는다 —
-동시에 두 관리자가 눌러도 하나만 성공한다.
+**`WHERE status=<전제>`가 전이 검증이다.** 별도 조회 후 판정하지 않는다.
+
+워커가 여럿이라 이게 중요하다. 조회해서 상태를 보고 판정하면 두 관리자가 동시에 눌렀을 때
+**둘 다 통과한다** — 각자 다른 워커에서 같은 값을 읽기 때문이다.
+`UPDATE`의 `WHERE`에 조건을 넣으면 DB가 직렬화해 하나만 1행을 바꾸고 나머지는 0행 → `409`.
 
 **`hold`는 상태 변경과 코멘트 INSERT가 한 트랜잭션이다.** 사유 없는 보류가 남지 않게.
 
@@ -638,14 +669,14 @@ interface BedrockLog {
 정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
 **대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
 
-> ### ⚠ 테이블 하나가 필요하다
+> ### `bedrock_logs` 테이블  *(정본 스키마에 반영됨)*
 >
 > ```sql
 > CREATE TABLE bedrock_logs (
->     id INTEGER PRIMARY KEY AUTOINCREMENT,
+>     id SERIAL PRIMARY KEY,
 >     school_id INTEGER,
->     called_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
->     model_id TEXT NOT NULL,
+>     called_at TIMESTAMPTZ DEFAULT NOW(),
+>     model_id VARCHAR(128) NOT NULL,
 >     is_complete BOOLEAN NOT NULL,
 >     latency_ms INTEGER,
 >     input_tokens INTEGER,
@@ -833,11 +864,24 @@ export const addComment         = (id, content)  => request('POST', `/admin/comp
 ## 6. 백엔드 계층
 
 ```
+app/main.py         FastAPI 인스턴스. 정적 파일 서빙도 여기서 mount
 app/api/routes/     요청 파싱 → 서비스 호출 → 응답 직렬화. 로직 금지
 app/services/       ComplaintService — 상태 전이 판정, 대화 왕복 조율
-app/db/             DatabaseManager — 쿼리. school_id 필터를 여기서 강제
+app/db/             PostgreSQL 커넥션 풀 + 쿼리. school_id 필터를 여기서 강제
+app/session/        Redis 세션 · 초안 소유권
 app/llm/            BedrockClient — 도구 호출로 분류·정제
 ```
+
+```python
+# app/main.py — 프론트를 같은 서버가 서빙한다
+app.include_router(api_router, prefix="/api")
+app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
+```
+
+**API 라우터를 정적 파일보다 먼저 등록한다.** 순서가 바뀌면 `/api/...`가 정적 핸들러에 먹힌다.
+
+**커넥션 풀은 워커마다 따로다.** 풀 크기 × 워커 수가 PostgreSQL의 `max_connections`를
+넘지 않게 잡는다.
 
 - 라우터는 얇게. 상태 전이 판정을 라우터에 쓰지 않는다
 - **`school_id` 필터는 DB 계층에서 강제한다.** 라우터가 빠뜨려도 새지 않도록
@@ -855,6 +899,10 @@ app/llm/            BedrockClient — 도구 호출로 분류·정제
 - **`is_complete=true` 이후 재대화의 미리보기 교체** — 새 확정안이 이전 것을 덮는 게 맞는지
 - **비밀번호 정책** — 최소 길이 등. 400 응답 조건에 들어간다
 - **`send_message` 타임아웃** — Bedrock이 느릴 때 프론트가 얼마나 기다릴지
+- **워커 수와 커넥션 풀 크기** — LLM 호출이 수 초라 동시 사용자 수에 맞춰 정한다.
+  EC2 인스턴스 크기, PostgreSQL `max_connections`와 함께 본다
+- **세션·초안 TTL** — 로그인 유지 시간, 미접수 초안 보존 시간
+- **`Secure` 쿠키** — HTTPS를 붙일지. 안 붙이면 `SameSite=Lax`만으로 간다
 
 ---
 
