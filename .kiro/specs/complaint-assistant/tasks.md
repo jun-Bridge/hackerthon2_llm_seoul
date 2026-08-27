@@ -39,99 +39,25 @@ AWS Bedrock API 호출이 성공하는지, 도구 호출을 지원하는지 검�
 **Status**: OPEN
 
 **Description**:
-웹 앱 디렉토리 구조와 PostgreSQL 스키마(학교/도메인/관리자코드/계정/민원/대화)를 생성합니다.
+`docs/backend-design.md` §2의 모듈 구성대로 디렉토리를 만들고, 스키마를 초기화합니다.
 
 **Acceptance Criteria**:
-- [ ] `app.py`, `lib/`, `pages/`, `data/` 생성
+- [ ] 계층 구조 생성 — `app/{main.py,api/{deps.py,routes/},schemas/,services/,repo/,session/,llm/,core/}`
+- [ ] `frontend/` — 정적 파일. `app/main.py`가 API 라우터 **뒤에** mount
 - [ ] `requirements.txt`: `fastapi`, `uvicorn[standard]`, `psycopg[binary,pool]`, `redis`, `boto3`, `bcrypt`
-- [ ] `.gitignore`에 `data/*.db`, `*.pem` 추가
-- [ ] `init_db.py` 실행 시 5개 테이블 생성: `schools`, `admin_codes`, `users`, `complaints`, `complaint_conversations`, `complaint_comments`
-- [ ] `complaints.status` CHECK 제약이 `('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')` 7종을 포함
-- [ ] `complaints.confirmed_at` 컬럼 존재 (기본 NULL)
+- [ ] `.gitignore`에 `*.pem`, `.env` 추가
+- [ ] `init_db.py` 실행 시 **7개 테이블** 생성: `schools`, `admin_codes`, `users`,
+      `chat_sessions`, `complaints`, `complaint_conversations`, `complaint_comments`, `bedrock_logs`
+- [ ] `complaints.status` CHECK 제약이 7종을 포함
+- [ ] `complaint_conversations`의 두 FK — `chat_session_id` **SET NULL**, `complaint_id` CASCADE
+- [ ] `chat_sessions.context`·`compacted_upto`·`is_manual_title` 존재
+- [ ] `schools.aliases TEXT[]` 존재
 
 **Files to create**:
-- `app.py`, `lib/__init__.py`, `lib/database_manager.py`, `lib/auth_manager.py`,
-  `lib/bedrock_client.py`, `lib/complaint_service.py`,
-  `pages/student_view.py`, `pages/admin_view.py`,
-  `requirements.txt`, `init_db.py`
+- `app/` 이하 모듈, `frontend/`, `requirements.txt`, `init_db.py`
 
-**init_db.py**:
-```python
-import PostgreSQL3
-from pathlib import Path
-
-def init_database():
-    Path("data").mkdir(exist_ok=True)
-    conn = PostgreSQL3.connect("data/app.db")
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS schools (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            email_domain TEXT UNIQUE NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-
-        CREATE TABLE IF NOT EXISTS admin_codes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            school_id INTEGER NOT NULL,
-            code TEXT NOT NULL,
-            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            school_id INTEGER NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('student', 'admin')),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS complaints (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            school_id INTEGER NOT NULL,
-            submitted_by_user_id INTEGER,
-            category TEXT NOT NULL,
-            location TEXT NOT NULL,
-            refined_title TEXT NOT NULL,
-            refined_body TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT '미확인'
-                CHECK(status IN ('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            confirmed_at TIMESTAMP,
-            FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-            FOREIGN KEY (submitted_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS complaint_conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            complaint_id INTEGER,
-            chat_session_id INTEGER,      -- 접수 전 조회는 이걸로
-            role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
-            content TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS complaint_comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            complaint_id INTEGER NOT NULL,
-            author_user_id INTEGER,
-            content TEXT NOT NULL,
-            is_hold_reason BOOLEAN NOT NULL DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE,
-            FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE SET NULL
-        );
-    """)
-    conn.commit()
-    conn.close()
-    print("✓ 데이터베이스 초기화 완료")
-
-if __name__ == "__main__":
-    init_database()
-```
+**스키마 정본**: `requirements.md`의 PostgreSQL Schema 절을 그대로 옮긴다.
+여기에 다시 적지 않는다 — 두 곳에 있으면 갈라진다.
 
 ---
 
@@ -153,175 +79,187 @@ if __name__ == "__main__":
 **Implementation**:
 ```python
 # seed_schools.py
-import PostgreSQL3
+import os, psycopg
 
 SCHOOLS = [
-    {"name": "조선대학교", "domain": "chosun.ac.kr", "codes": ["CSU-ADM-01", "CSU-ADM-02"]},
-    {"name": "서울대학교", "domain": "snu.ac.kr", "codes": ["SNU-ADM-01"]},
+    {"name": "조선대학교", "domain": "chosun.ac.kr",
+     "aliases": ["조선대", "조대"],   "codes": ["CSU-ADM-01", "CSU-ADM-02"]},
+    {"name": "전북대학교", "domain": "jbnu.ac.kr",
+     "aliases": ["전북대"],           "codes": ["JBNU-ADM-01"]},
+    {"name": "광주과학기술원", "domain": "gist.ac.kr",
+     "aliases": ["GIST", "지스트", "광주과기원"], "codes": ["GIST-ADM-01"]},
 ]
 
 def seed():
-    conn = PostgreSQL3.connect("data/app.db")
-    for school in SCHOOLS:
-        cursor = conn.execute(
-            "INSERT OR IGNORE INTO schools (name, email_domain) VALUES (?, ?)",
-            (school["name"], school["domain"])
-        )
-        school_id = cursor.lastrowid or conn.execute(
-            "SELECT id FROM schools WHERE email_domain = ?", (school["domain"],)
-        ).fetchone()[0]
-
-        for code in school["codes"]:
-            exists = conn.execute(
-                "SELECT 1 FROM admin_codes WHERE school_id = ? AND code = ?",
-                (school_id, code)
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        for s in SCHOOLS:
+            row = conn.execute(
+                "INSERT INTO schools (name, email_domain, aliases) VALUES (%s,%s,%s) "
+                "ON CONFLICT (email_domain) DO UPDATE SET aliases = EXCLUDED.aliases "
+                "RETURNING id",
+                (s["name"], s["domain"], s["aliases"])
             ).fetchone()
-            if not exists:
+            for code in s["codes"]:
                 conn.execute(
-                    "INSERT INTO admin_codes (school_id, code) VALUES (?, ?)",
-                    (school_id, code)
+                    "INSERT INTO admin_codes (school_id, code) VALUES (%s,%s) "
+                    "ON CONFLICT DO NOTHING",
+                    (row[0], code)
                 )
-    conn.commit()
-    conn.close()
-    print(f"✓ {len(SCHOOLS)}개 학교 시드 완료")
-
-if __name__ == "__main__":
-    seed()
 ```
+
+**여러 번 실행해도 안전해야 한다.** `ON CONFLICT`로 중복 삽입을 막는다 —
+배포 스크립트가 매번 부르기 때문이다.
+
 
 ---
 
 ## M1: 계정 & 학교 시스템
 
-### TASK-101: DatabaseManager 계정/학교 기능 구현
+### TASK-101: repo 계층 — 계정/학교
+
 **Depends on**: TASK-004
 **Status**: OPEN
 
-**Description**:
-이메일 도메인 매칭, 관리자 코드 검증, 계정 CRUD를 구현합니다.
-
 **Acceptance Criteria**:
-- [ ] `find_school_by_email(email)`: `@` 뒤 도메인으로 학교 조회, 없으면 `None`
-- [ ] `verify_admin_code(school_id, code)`: 해당 학교 코드 목록에 있는지 확인
-- [ ] `create_user(school_id, email, password, role)`: bcrypt 해싱 후 저장
-- [ ] `authenticate_user(email, password)`: 성공 시 `{id, school_id, role}` 반환
-- [ ] `verify_password(user_id, password)`: 철회 시 재사용할 별도 메서드
-- [ ] `change_password`, `delete_user` 구현
+- [ ] `school_repo.find_by_domain(conn, domain)` — 없으면 `None`
+- [ ] `school_repo.list_all(conn)` — 별칭 포함 (가입 드롭다운용)
+- [ ] `school_repo.verify_admin_code(conn, school_id, code)`
+- [ ] `user_repo.create/find_by_email/get_hash/change_password/delete`
+- [ ] **모든 조회 함수가 `school_id`를 필수 인자로 받는다** (넘기지 않으면 호출 불가)
+- [ ] 이메일은 소문자로 정규화해 저장·조회
 
-**Files to modify**:
-- `lib/database_manager.py`
+**Files**: `app/repo/school_repo.py`, `app/repo/user_repo.py`
 
 ---
 
-### TASK-102: 가입/로그인 UI 구현 (도메인 자동 매칭)
+### TASK-102: auth_service — 가입·로그인·세션
+
 **Depends on**: TASK-101
 **Status**: OPEN
 
-**Description**:
-학교 선택 UI 없이 이메일만으로 가입되는 폼을 만듭니다.
-
 **Acceptance Criteria**:
-- [ ] 가입 폼: 이메일, 비밀번호(8자+), 역할(학생/관리자) 라디오
-- [ ] 역할이 관리자면 코드 입력 필드가 나타남
-- [ ] 이메일 도메인이 시드된 학교와 매칭 안 되면 "지원하지 않는 학교 이메일입니다" 에러
-- [ ] 관리자 코드가 불일치하면 가입 차단
-- [ ] 로그인 성공 시 Redis에 세션을 만들고(`user_id`·`school_id`·`role`) HttpOnly 쿠키로 세션 id를 내려준다
-- [ ] 로그아웃 버튼으로 세션 초기화
+- [ ] `signup(email, password, admin_code)` — **역할은 코드가 정한다**
+      (비면 `student` · 맞으면 `admin` · 틀리면 `INVALID_ADMIN_CODE`로 가입 차단)
+- [ ] 이메일 중복이면 `EMAIL_TAKEN`(409)
+- [ ] bcrypt 해싱. 평문은 로그에도 남기지 않는다
+- [ ] `login` — 계정이 없어도 더미 해시를 한 번 대조하고 401
+      (응답 속도로 이메일 존재 여부가 새지 않게)
+- [ ] "이메일 없음"과 "비밀번호 틀림"을 구분하지 않는다 — 둘 다 `INVALID_CREDENTIALS`
+- [ ] `login_session.create/get/delete` — Redis. `get`은 **TTL을 연장**(sliding)
+- [ ] 쿠키는 `HttpOnly` · `SameSite=Lax`
+- [ ] `verify_password(user_id, password)` — 아무것도 바꾸지 않는다. 실패 횟수 제한
 
-**Files to modify**:
-- `lib/auth_manager.py`, `app.py`
+**Files**: `app/services/auth_service.py`, `app/session/login_session.py`, `app/api/routes/auth.py`
 
 ---
 
-### TASK-103: 역할 기반 화면 분기
+### TASK-103: deps — 인증·역할·소유권
+
 **Depends on**: TASK-102
 **Status**: OPEN
 
-**Description**:
-로그인한 `role`에 따라 학생 화면 또는 관리자 화면만 보이게 고정합니다. (목업의 뷰 스위처는 만들지 않음)
-
 **Acceptance Criteria**:
-- [ ] `role == 'student'`이면 `pages/student_view.py`만 렌더링
-- [ ] `role == 'admin'`이면 `pages/admin_view.py`만 렌더링
-- [ ] URL 조작이나 새로고침으로도 다른 role 화면에 접근 불가
+- [ ] `current_user` — 쿠키 → Redis 조회. 없으면 401 `UNAUTHENTICATED`
+- [ ] `require_admin` — 학생이 부르면 403 `FORBIDDEN_ROLE`
+- [ ] `require_session_owner(sid, user_id)` — 남의 세션이면 **404**(403이 아니다)
+- [ ] **초안·작성 API(#8~11)는 관리자가 부르면 403** — 민원을 넣는 것은 학생의 일이다
+- [ ] 라우터에 인증 `if`를 쓰지 않는다. 전부 `Depends`로
 
-**Files to modify**:
-- `app.py`
+**Files**: `app/api/deps.py`
 
 ---
 
 ## M2: AI 민원 변환 (대화형)
 
-### TASK-201: BedrockClient — 되묻기/확정 분기 구현
+### TASK-201: llm 계층 — 도구 둘로 부족을 판정
+
 **Depends on**: TASK-001
 **Status**: OPEN
 
 **Description**:
-`tool_choice`를 강제하지 않고, 모델이 정보 부족 시 텍스트로 되묻거나 충분하면 도구를 호출하도록 구현합니다.
+모델에게 도구 **둘**을 주고 **어느 것을 불렀는지**로 부족한지 아닌지를 읽습니다.
 
 **Acceptance Criteria**:
-- [ ] `CATEGORIES` 상수 (고정 7개 목록)
-- [ ] `_refine_tool_schema()`: category(enum)/location/refined_title/refined_body, 설명에 "충분할 때만 호출" 명시
-- [ ] `refine_complaint(conversation)`: `tool_use` 블록이 있으면 `{is_complete: True, ...}`, 없으면 텍스트를 `{is_complete: False, follow_up_question}`으로 반환
-- [ ] Bedrock 호출 실패 시 `BedrockRefineError` 발생
+- [ ] `CATEGORIES` 고정 7종 · `DETAIL_CHIPS` 카테고리별 고정 칩 (`llm/choices.py`)
+- [ ] `ASK_FOLLOWUP` 스키마 — `missing`(enum) · `question` · `choices[]`
+- [ ] `CLASSIFY_AND_REFINE` 스키마 — `category`(**enum**) · `location` · `refined_title` · `refined_body` · `session_title`
+- [ ] **`tool_choice: {"type": "any"}`로 둘 중 하나를 반드시 부르게 강제**
+- [ ] `invoke_model` + Anthropic 네이티브 포맷. **리전을 명시하지 않는다**
+- [ ] 모델 id는 `core/config.py`에서 읽는다 (`global.` 프로필)
+- [ ] `system`은 최상위 필드. 세션주제를 여기 넣는다 — `messages`에 끼우지 않는다
+- [ ] `user` 발화가 연속되면 합쳐 보낸다 (이전 턴이 LLM 실패로 끝난 경우)
+- [ ] `tool_use` 블록이 여럿이면 **첫 번째만** 쓴다
+- [ ] `refine(context, buffer) -> RefineResult` · `compact(prev_context, messages) -> CompactResult`
+- [ ] **`llm`은 `repo`를 부르지 않는다.** 호출 결과를 `Usage`에 담아 돌려주고 적재는 서비스가 한다
+- [ ] `AccessDenied`는 재시도하지 않는다. `Throttling`만 1회 backoff
 
-**Files to modify**:
-- `lib/bedrock_client.py`
+**Files**: `app/llm/{client.py,tools.py,choices.py,prompts.py}`
 
 ---
 
-### TASK-202: ComplaintService — 대화 왕복 조율
+### TASK-202: session_service — 대화 왕복·칩·턴 잠금
+
 **Depends on**: TASK-201, TASK-101
 **Status**: OPEN
 
-**Description**:
-학생 메시지마다 대화를 기록하고 Bedrock을 호출해 다음 턴을 조율합니다.
-
 **Acceptance Criteria**:
-- [ ] `send_message(session_id, student_message)`: 학생 발화 기록 → 맥락(요약+버퍼) 로드 → `refine` 호출 → AI 응답·선택지 기록 → 결과 반환
-- [ ] `conversation_repo.add`, `conversation_repo.list` 구현 (chat_session_id 기준)
-- [ ] `is_complete=False`이면 `follow_up_question`을 AI 메시지로 기록
-- [ ] `is_complete=True`이면 요약 메시지("[정리 완료] {제목}")를 AI 메시지로 기록
+- [ ] `send_message(session_id, text)` — 학생 발화 **먼저 저장**(LLM 실패해도 남는다)
+- [ ] 맥락 조립 — `context`(세션주제) + `compacted_upto` 이후 버퍼
+- [ ] **LLM 호출 전에 커넥션을 반납한다** (수 초 붙들면 풀이 마른다)
+- [ ] `turn:{sid}:running`을 **`SET NX`**로 세운다. 이미 있으면 409 `TURN_IN_PROGRESS`
+- [ ] `finally`로 반드시 해제 — 실패로 끝나도
+- [ ] `ask_followup`이면 칩을 합친다 — **카테고리는 고정 7종만**, 나머지는 고정+모델, 끝에 "직접 입력"
+- [ ] 칩을 `complaint_conversations.choices`에 **함께 저장**(Redis는 캐시)
+- [ ] 같은 `missing`이 2회 반복되면 예시를 덧붙이고, 4회면 409 `CONVERSATION_STUCK`
+- [ ] 공백·2000자 초과·직전과 동일한 발화는 **모델을 부르지 않고** 걸러낸다
+- [ ] 확정 턴이면 `refined_json`을 같은 행에 저장하고 `chat_sessions`의 제목·카테고리 갱신
+- [ ] `bedrock_logs` 적재는 여기서 한다 (`school_id`는 `chat_sessions`에서)
 
-**Files to modify**:
-- `lib/complaint_service.py`, `lib/database_manager.py`
+**Files**: `app/services/session_service.py`, `app/repo/conversation_repo.py`
 
 ---
 
-### TASK-203: 학생 채팅 UI (대화형 정제)
-**Depends on**: TASK-202, TASK-103
+### TASK-203: 세션 컨테이너 — 목록·압축
+
+**Depends on**: TASK-202
 **Status**: OPEN
 
 **Description**:
-학생이 자연어로 입력하고, 부족하면 AI가 되묻고, 충분하면 미리보기가 뜨는 채팅 UI를 구현합니다.
+"과거 대화" 목록과 맥락 압축을 구현합니다. `docs/backend-design.md` §7이 정본입니다.
 
 **Acceptance Criteria**:
-- [ ] 새 작성 시작 시 `POST /chat-sessions`로 세션 행을 만든다 (소유자는 그 행에 남는다)
-- [ ] `st.chat_input()`으로 입력 → `ComplaintService.send_message()` 호출
-- [ ] 대화 이력을 `st.chat_message()`로 시간순 표시
-- [ ] `is_complete=False`: 다음 입력을 계속 받음 (잠금 없음)
-- [ ] `is_complete=True`: 미리보기 카드(카테고리/위치/제목/본문) + "정식 접수하기" 버튼 표시
+- [ ] `POST /chat-sessions` — 세션 행 생성. **빈 세션이 이미 있으면 재사용**(연타 방지)
+- [ ] `GET /chat-sessions` — `user_id`로 거른다. **메시지 없는 세션은 제외**. 최신순
+- [ ] `GET /chat-sessions/{sid}` — 메타 + 현재 `step` + `choices` + `preview`
+- [ ] 압축 — 미압축 분량이 임계치를 넘으면 **턴 응답을 보낸 뒤** 백그라운드로
+- [ ] **대상 구간을 시작 시점에 고정**하고, 갱신 SQL에 `WHERE compacted_upto = from`
+- [ ] 새 세션주제 = 압축(**이전 세션주제** + 밀려난 구간) — 누적되어야 초반 맥락이 안 사라진다
+- [ ] **최근 N턴은 압축하지 않는다**
+- [ ] 압축 프롬프트에 "확정된 항목은 그대로 옮겨 적어라"
+- [ ] `compact:{sid}`를 `SET NX`로 잠근다
+- [ ] 실패해도 기존 값 유지 + 다음 턴 재시도. **응답에 영향 없음**
+- [ ] `is_manual_title=TRUE`면 자동 갱신이 제목을 덮어쓰지 않는다
 
-**Files to modify**:
-- `pages/student_view.py`
+**Files**: `app/services/session_service.py`, `app/repo/chat_session_repo.py`, `app/session/session_state.py`
 
 ---
 
-### TASK-204: 정식 접수 처리
+### TASK-204: 정식 접수 — 한 트랜잭션에 넷
+
 **Depends on**: TASK-203
 **Status**: OPEN
 
-**Description**:
-"정식 접수하기" 클릭 시에만 `complaints` 테이블에 저장하고, 대화 기록에 `complaint_id`를 연결합니다.
-
 **Acceptance Criteria**:
-- [ ] `ComplaintService.submit()` → `db.create_complaint()` 호출
-- [ ] 접수 성공 시 그 세션의 모든 대화 행에 `complaint_id`가 채워진다 (두 FK가 모두 채워진 상태)
-- [ ] 접수 후 새 세션을 발급해 다음 민원 작성이 이전 대화와 섞이지 않음. 접수된 세션은 읽기 전용
-- [ ] 접수 직후 게시판이 재조회되어 새 항목이 보임
+- [ ] 마지막 `refined_json` 조회. 없으면 409 `DRAFT_NOT_COMPLETE`
+- [ ] 이미 접수된 세션이면 409 `SESSION_CLOSED`
+- [ ] **한 트랜잭션에 넷** — ① `complaints` INSERT ② 대화에 `complaint_id` 채움
+      ③ `chat_sessions.complaint_id` 채움(읽기 전용화) ④ 다음 세션 발급
+- [ ] `school_id`·작성자를 **세션 행에서** 가져온다 (요청 본문에서 받지 않는다)
+- [ ] 응답에 `complaint_id`와 `next_session_id`
+- [ ] **확정안을 요청 본문으로 받지 않는다** — 화면에서 값을 바꿔 보낼 수 있게 된다
+- [ ] 프론트는 "이대로 접수하시겠습니까?" 확인창을 거친 뒤에만 호출한다
 
-**Files to modify**:
-- `pages/student_view.py`, `lib/complaint_service.py`
+**Files**: `app/services/session_service.py`, `app/api/routes/session.py`
 
 ---
 
@@ -343,7 +281,7 @@ if __name__ == "__main__":
 - [ ] `submitted_by_user_id`는 화면에 절대 출력하지 않음 (내 글 판별용으로만 클라이언트에서 비교)
 
 **Files to modify**:
-- `pages/student_view.py`, `lib/database_manager.py`
+- `app/api/routes/board.py`, `app/repo/complaint_repo.py`
 
 ---
 
@@ -361,10 +299,10 @@ if __name__ == "__main__":
   - 비밀번호 불일치 → "비밀번호가 올바르지 않습니다", 상태 불변
   - 일치 → `db.withdraw_complaint()` 호출, `status='철회'`
 - [ ] `db.withdraw_complaint()`는 `submitted_by_user_id` 일치 조건을 WHERE에 포함 (타인 글 철회 방어)
-- [ ] 철회 성공 시 게시판에서 즉시 사라짐 (`st.rerun()`)
+- [ ] 철회 성공 시 게시판·관리자 목록 양쪽에서 사라진다 (프론트가 목록·통계를 다시 받는다)
 
 **Files to modify**:
-- `lib/complaint_service.py`, `lib/database_manager.py`, `pages/student_view.py`
+- `app/services/complaint_service.py`, `app/repo/complaint_repo.py`
 
 ---
 
@@ -388,7 +326,7 @@ if __name__ == "__main__":
 - [ ] `get_complaint(id, school_id) -> dict | None`: 단일 민원 조회 (school_id 스코프)
 
 **Files to modify**:
-- `lib/database_manager.py`
+- `app/repo/complaint_repo.py`
 
 ---
 
@@ -406,7 +344,7 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 - [ ] `add_comment(complaint_id, author_user_id, content) -> (bool, str)`: 빈 값 검증
 
 **Files to modify**:
-- `lib/complaint_service.py`
+- `app/services/complaint_service.py`
 
 ---
 
@@ -423,7 +361,7 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 - [ ] 필터 탭 클릭 시 `db.list_complaints(school_id, status=선택값)`로 목록 갱신
 
 **Files to modify**:
-- `pages/admin_view.py`
+- `app/api/routes/admin.py`
 
 ---
 
@@ -442,7 +380,7 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 - [ ] 목록·상세 어디에도 철회 버튼은 없음 (관리자는 철회 불가)
 
 **Files to modify**:
-- `pages/admin_view.py`
+- `app/api/routes/admin.py`
 
 ---
 
@@ -455,14 +393,14 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 
 **Acceptance Criteria**:
 - [ ] 현재 상태가 `확인`일 때만 [수락][보류][거절] 세 버튼이 보임 (`미확인`·`처리중`·`해결완료`·`보류`·`거절` 상태에서는 안 보임)
-- [ ] "수락" 클릭 → `ComplaintService.accept()` → 성공 시 `처리중`으로 전환, `st.rerun()`
+- [ ] "수락" 클릭 → `accept` → `확인`일 때만 `처리중`으로. 응답이 갱신된 민원이고, 목록·통계는 따로 다시 받는다
 - [ ] "보류" 클릭 → `세션 상태(hold_modal_open) = True`로 모달 오픈 (버튼 클릭 즉시 전환되지 않음)
 - [ ] 모달 내 코멘트 입력창이 비어 있으면 "보류 확정" 버튼이 비활성화되거나, 제출 시 `ComplaintService.hold()`가 거부하고 에러 메시지 표시
 - [ ] 모달에서 사유를 입력하고 확정하면 `보류` 전환 + 코멘트 등록이 동시에 반영, 모달 닫힘
 - [ ] "거절" 클릭 → `ComplaintService.reject()` → 성공 시 즉시 `거절`로 전환 (코멘트 입력 없이 즉시)
 
 **Files to modify**:
-- `pages/admin_view.py`
+- `app/api/routes/admin.py`
 
 ---
 
@@ -475,11 +413,11 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 
 **Acceptance Criteria**:
 - [ ] 현재 상태가 `처리중`일 때만 [해결 완료] 버튼이 보임
-- [ ] 클릭 → `ComplaintService.resolve()` → 성공 시 `해결완료`로 전환, `st.rerun()`
+- [ ] 클릭 → `resolve` → `처리중`일 때만 `해결완료`로. 두 단계를 건너뛸 수 없다
 - [ ] `해결완료`는 최종 상태 — 이후 버튼이 아무것도 안 보임 (코멘트 입력창은 계속 보임)
 
 **Files to modify**:
-- `pages/admin_view.py`
+- `app/api/routes/admin.py`
 
 ---
 
@@ -493,11 +431,11 @@ DB 메서드를 감싸 사용자용 성공/실패 메시지를 반환하고, 보
 **Acceptance Criteria**:
 - [ ] 상세 화면 하단에 코멘트 목록(`get_comments`, 시간순)과 입력창이 항상 존재
 - [ ] `is_hold_reason=True`인 코멘트는 "보류 사유"로 시각적으로 구분 표시
-- [ ] 입력창에 텍스트를 넣고 "등록" 클릭 → `ComplaintService.add_comment()` 호출 → `st.rerun()`
+- [ ] 입력창에 텍스트를 넣고 "등록" → `add_comment`. 상태와 무관하게 언제든, 누적된다
 - [ ] `미확인`·`해결완료`·`거절` 등 어떤 상태에서도 코멘트 입력이 막히지 않음
 
 **Files to modify**:
-- `pages/admin_view.py`
+- `app/api/routes/admin.py`
 
 ---
 
@@ -598,7 +536,7 @@ Bedrock 호출 횟수를 로깅합니다.
 - [ ] `is_complete` 여부(되묻기 vs 확정)도 함께 기록해 대화 왕복 빈도를 파악할 수 있게 함
 
 **Files to modify**:
-- `lib/bedrock_client.py`
+- `app/llm/client.py`
 
 ---
 
