@@ -539,19 +539,27 @@ def send_message(sid: int, body: SendMessageIn,
 **효과** — 학생 발화와 AI 응답이 대화 기록에 남는다. **민원이 만들어지지는 않는다** —
 접수는 #11에서만 일어난다. 확정안은 서버가 보관하고, 접수 때 그것을 쓴다.
 
-**하는 일** — Bedrock이 도구(`classify_and_refine_complaint`)를 호출할 만큼 정보가 모였는지
-스스로 판단한다. 부족하면 도구를 안 부르고 일반 텍스트로 되묻는다.
+**하는 일** — 모델에게 도구 **둘**을 주고, **어느 것을 불렀는지**로 부족한지 아닌지를 읽는다.
+정보가 모자라면 `ask_followup`을, 충분하면 `classify_and_refine`을 부른다.
+서버가 문장을 뜯어 판단하지 않는다.
 
 ```jsonc
-// 되묻는 경우
-{ "is_complete": false, "follow_up_question": "어느 건물 3층인지 알려주시겠어요?" }
+// 부족한 경우 — 되묻고 선택지를 함께 준다
+{ "is_complete": false,
+  "step": "location",
+  "question": "어느 건물 3층인지 알려주시겠어요?",
+  "choices": ["본관", "학생회관", "공대 1호관", "직접 입력"] }
 
 // 확정안이 나온 경우
 { "is_complete": true,
+  "step": "confirm",
   "preview": { "category": "위생 / 배관", "location": "본관 3층 남자화장실",
                "refined_title": "본관 3층 화장실 배수 불량 조치 요청",
                "refined_body": "현상: ...\n영향: ...\n요청: ..." } }
 ```
+
+**`choices`는 칩으로 그린다.** 누르면 그 문구를 그대로 `sendMessage`로 보낸다 —
+**선택 전용 API가 없다.** 마지막 항목은 항상 "직접 입력"이라 자유 입력으로 빠질 수 있다.
 
 **프론트가 `is_complete`로 화면을 가른다.** `false`면 질문을 말풍선으로 띄우고 입력창 유지,
 `true`면 미리보기 카드 + "정식 접수" 버튼.
