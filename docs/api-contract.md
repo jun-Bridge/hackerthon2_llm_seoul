@@ -103,7 +103,7 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 | `VALIDATION_FAILED` | 400 | 형식·길이 규칙 위반 | 해당 입력칸에 표시 |
 | `INVALID_CREDENTIALS` | 401 | 로그인 실패 | 폼에 표시 (계정 존재 여부는 구분하지 않는다) |
 | `UNAUTHENTICATED` | 401 | 미로그인·세션 만료 | **`client.js`가 처리.** 로그인 화면으로 |
-| `WRONG_PASSWORD` | 401 | 비밀번호 재확인 실패 (변경·탈퇴·철회) | **비밀번호 칸에 경고.** 창은 열어둔 채 다시 입력받는다 |
+| `WRONG_PASSWORD` | 401 | 비밀번호 재확인 실패 (변경·탈퇴·철회) | **비밀번호 칸에 경고.** 창을 유지하고 다시 입력받는다. **다음 단계로 넘어가지 않는다** |
 | `FORBIDDEN_ROLE` | 403 | 역할에 없는 API 호출 | 일어나면 안 되는 일. 화면 분기 버그 |
 | `NOT_OWNER` | 403 | 내 것이 아닌 초안·민원 | 목록 새로고침 |
 | `NOT_FOUND` | 404 | 없거나 볼 권한 없음 (철회 포함) | 목록으로 돌려보냄 |
@@ -204,7 +204,7 @@ interface ConversationTurn {
 > 워커가 여럿이라는 사실이 이 계약의 여러 곳을 정한다 — 세션이 Redis에 있어야 하는 이유,
 > 전이 검증이 `UPDATE ... WHERE`인 이유, 목록·통계를 캐시하지 않는 이유가 전부 여기서 나온다.
 
-23개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
+24개다. 프론트는 `src/api/`, 백엔드 라우터는 `app/api/routes/`.
 
 | # | 프론트 함수 | HTTP | 백엔드 함수 | 무엇을 하나 | 건드리는 테이블 |
 |---|---|---|---|---|---|
@@ -215,6 +215,7 @@ interface ConversationTurn {
 | 5 | `getMe` | `GET /auth/me` | `get_me` | 내 정보·역할 | `users` R · `schools` R |
 | 6 | `changePassword` | `PATCH /auth/password` | `change_password` | 비밀번호 변경 | `users` R/W |
 | 7 | `deleteAccount` | `DELETE /auth/me` | `delete_account` | 탈퇴 | `users` D · `complaints` W(SET NULL) |
+| 7-1 | `verifyPassword` | `POST /auth/verify-password` | `verify_password` | 비밀번호 확인만 | `users` R |
 | 8 | `startDraft` | `POST /drafts` | `create_draft` | 작성용 키 발급 | Redis W |
 | 9 | `sendMessage` | `POST /drafts/{k}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 · `bedrock_logs` W · Redis R/W |
 | 10 | `getDraftConversation` | `GET /drafts/{k}/conversation` | `get_draft_conversation` | 대화 복구 | `complaint_conversations` R · Redis R |
@@ -341,6 +342,18 @@ def signup(body: SignupIn, response: Response) -> SignupOut:
 
 **오류와 화면 표시**
 
+**되돌릴 수 없는 동작의 공통 흐름** (철회 · 탈퇴)
+
+| 단계 | 화면 | API |
+|---|---|---|
+| 1 | 경고 + 비밀번호 | `verifyPassword(pw)` (#7-1) |
+| | 틀림 | 창 유지 + 경고. **실행 API를 부르지 않는다** |
+| 2 | "정말 삭제하시겠습니까?" | 없음 (화면 상태) |
+| 3 | 삭제 실행 | `withdrawComplaint` (#15) 또는 `deleteAccount` (#7) |
+| | 완료 | "삭제되었습니다" 알림 |
+
+**가입 화면 경고**
+
 | 코드 | HTTP | 어디에 무엇을 |
 |---|---|---|
 | `UNSUPPORTED_DOMAIN` | 400 | 이메일 칸 아래 — "지원하지 않는 학교입니다" + 지원 학교 보기(#1) |
@@ -397,11 +410,40 @@ def delete_account(body: DeleteAccountIn, user = Depends(current_user)) -> None:
     db.delete_user(user.id)        # users DELETE → complaints.submitted_by_user_id = NULL
 ```
 
+**탈퇴도 철회와 같은 세 단계를 탄다** — 경고 + 비밀번호(`verifyPassword`) → 최종 확인 → 실행.
+되돌릴 수 없는 정도가 철회보다 크므로 경고 문구를 더 분명히 한다.
+
 **탈퇴가 건드리는 것** — `users` 행 삭제, `complaints.submitted_by_user_id`가 `NULL`로.
 **민원 자체는 남는다.** 학교의 공공 기록이고 게시판은 이미 익명이라 표시에 영향이 없다.
 `complaint_conversations`·`complaint_comments`는 민원에 딸려 있으므로 함께 남는다.
 
 프론트는 탈퇴 확인 문구에 "작성한 민원은 익명으로 남습니다"를 적는다.
+
+---
+
+#### 7-1. `verifyPassword` — 비밀번호만 확인
+
+```js
+/** 되돌릴 수 없는 동작 전에 본인 확인만 한다. 아무것도 바꾸지 않는다. */
+export async function verifyPassword(password) { ... }   // → void (틀리면 throw)
+```
+```python
+@router.post("/auth/verify-password", status_code=204)
+def verify_password(body: VerifyIn, user = Depends(current_user)) -> None:
+    if not db.verify_password(user.id, body.password):
+        raise Unauthorized("WRONG_PASSWORD")
+```
+
+**왜 따로 있나** — 철회·탈퇴는 **본인 확인 → 최종 확인 → 실행** 세 단계다.
+비밀번호가 틀렸다는 것을 "정말 삭제하시겠습니까?"를 지나기 **전에** 알려야 하는데,
+실행 API 하나뿐이면 확인창을 지난 뒤에야 알게 된다. 순서가 뒤집힌다.
+
+**아무것도 바꾸지 않는다.** 조회만 하고 204나 401을 돌려준다.
+
+**실행 API도 비밀번호를 다시 받아 검증한다.** 이 호출은 화면 흐름을 위한 것이지
+실행 권한을 주는 것이 아니다. 여기를 건너뛰고 철회를 직접 불러도 서버가 막는다.
+
+**남용 방지**: 실패 횟수를 세어 제한한다(값은 7장).
 
 ---
 
@@ -673,20 +715,35 @@ def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None:
 | `id` | `int` (경로) | |
 | `password` | `str` (본문) | 본인 확인 |
 
-**철회 흐름 — 경고 먼저, 비밀번호 다음, 결과 알림**
+**철회 흐름 — 세 단계**
 
 ```
 철회 버튼
-  → 경고창: "철회하면 게시판과 관리자 목록 양쪽에서 즉시 사라지고
-             되돌릴 수 없습니다." + 비밀번호 입력칸
-  → [취소]  아무것도 부르지 않는다. 창만 닫힌다
-  → [철회하기]
-       ├─ 401 WRONG_PASSWORD → **창을 닫지 않는다.** 비밀번호 칸에 경고를 띄우고
-       │                        비운 뒤 다시 입력받는다
-       └─ 204 성공 → 창을 닫고 "삭제되었습니다" 알림 → 목록에서 사라진다
+  │
+  ├─[1] 경고 + 비밀번호 창
+  │     "철회하면 게시판과 관리자 목록 양쪽에서 즉시 사라지고 되돌릴 수 없습니다."
+  │     + 비밀번호 입력칸
+  │       [취소] → 아무것도 부르지 않는다
+  │       [확인] → verifyPassword(pw)   (#7-1)
+  │                 ├─ 401 WRONG_PASSWORD
+  │                 │    → **창을 닫지 않는다.** "비밀번호가 일치하지 않습니다" 경고,
+  │                 │      칸을 비우고 포커스를 되돌린다
+  │                 └─ 204 → 2단계로
+  │
+  └─[2] 최종 확인창
+        "정말 삭제하시겠습니까? 이 동작은 되돌릴 수 없습니다."
+          [취소] → 아무것도 부르지 않는다. 민원은 그대로
+          [삭제] → withdrawComplaint(id, pw)
+                     └─ 204 → 창을 닫고 **"삭제되었습니다"** 알림 → 목록에서 사라진다
 ```
 
-**비밀번호가 틀렸을 때 창을 닫으면 안 된다.** 처음부터 다시 여는 건 사고에 가깝다.
+**왜 비밀번호가 먼저인가** — 순서를 바꾸면 "정말 삭제하시겠습니까?"에 확인을 누른 뒤에야
+비밀번호가 틀렸다는 걸 알게 된다. 결심을 두 번 하게 만드는 셈이다.
+
+**비밀번호가 틀렸을 때 창을 닫지 않는다.** 처음부터 다시 여는 건 사고에 가깝다.
+
+**서버는 두 번 다 검증한다.** 1단계를 건너뛰고 철회를 직접 불러도 막힌다 —
+1단계는 화면 흐름을 위한 것이지 실행 권한을 주는 것이 아니다.
 
 **하드 삭제가 아니라 상태 전환이다.** 레코드는 남고 조회에서만 빠진다.
 게시판·관리자 목록 양쪽에서 즉시 사라진다.
@@ -1038,7 +1095,7 @@ logout()  →  서버가 Redis 세션 삭제 + 쿠키 만료
 ```
 src/api/
 ├─ client.js      fetch 래퍼 — credentials·헤더·오류 정규화. 여기만 fetch를 안다
-├─ auth.js        7개
+├─ auth.js        8개
 ├─ draft.js       4개
 ├─ board.js       4개
 └─ admin.js       8개
@@ -1157,6 +1214,7 @@ app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
 - **폴링 주기** — "실시간 반영"을 새로고침으로 할지, 몇 초 간격 폴링으로 할지.
   SSE·WebSocket은 1차 범위 밖으로 본다
 - **`is_complete=true` 이후 재대화의 미리보기 교체** — 새 확정안이 이전 것을 덮는 게 맞는지
+- **`verifyPassword` 실패 횟수 제한** — 몇 번 틀리면 얼마나 막을지
 - **`send_message` 타임아웃** — Bedrock이 느릴 때 프론트가 얼마나 기다릴지
 - **워커 수와 커넥션 풀 크기** — LLM 호출이 수 초라 동시 사용자 수에 맞춰 정한다.
   EC2 인스턴스 크기, PostgreSQL `max_connections`와 함께 본다

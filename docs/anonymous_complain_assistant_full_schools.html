@@ -1600,6 +1600,29 @@
   </div>
   <style>@keyframes bootspin { to { transform: rotate(360deg); } }</style>
 
+  <!-- WITHDRAW CONFIRM MODAL — 비밀번호 확인 후 최종 확인 -->
+  <div class="admin-modal-overlay" id="withdrawConfirmModal">
+    <div class="admin-modal-card" style="max-width:380px;">
+      <div class="admin-modal-head">
+        <h3 style="color:#B91C1C;"><i class="bi bi-exclamation-triangle-fill"></i> 정말 삭제하시겠습니까?</h3>
+        <button class="admin-modal-close" onclick="closeWithdrawConfirm()"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="admin-modal-body">
+        <p style="font-size:0.84rem; color:#374151; margin:0 0 4px;">
+          본인 확인이 완료되었습니다.
+        </p>
+        <p style="font-size:0.82rem; color:#6B7280; margin:0;">
+          삭제하면 게시판과 관리자 목록에서 즉시 사라지며 <b>되돌릴 수 없습니다.</b>
+        </p>
+        <div class="admin-modal-actions" style="margin-top:14px;">
+          <button class="btn-action-small" onclick="closeWithdrawConfirm()">취소</button>
+          <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2; border-color:#FCA5A5;"
+                  onclick="confirmWithdraw()">삭제하기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- SUBMIT CONFIRM MODAL — 접수는 게시판에 공개된다 -->
   <div class="admin-modal-overlay" id="submitConfirmModal">
     <div class="admin-modal-card" style="max-width:400px;">
@@ -1683,8 +1706,8 @@
                style="width:100%; padding:10px; border:1px solid #E5E7EB; border-radius:8px; font-size:0.9rem;" />
         <p class="auth-warn" id="warnWithdraw"></p>
         <div class="admin-modal-actions" style="margin-top:12px;">
-          <button class="btn-action-small" onclick="closeWithdrawModal()">취소</button>
-          <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2;" onclick="submitWithdraw()">철회하기</button>
+          <button class="btn-action-small" onclick="cancelWithdraw()">취소</button>
+          <button class="btn-action-small" style="color:#B91C1C; background:#FEE2E2;" onclick="submitWithdraw()">확인</button>
         </div>
       </div>
     </div>
@@ -2869,6 +2892,10 @@
     }
     function closeWithdrawModal() {
       document.getElementById('withdrawModal').classList.remove('open');
+      // withdrawTargetId는 여기서 지우지 않는다 — 2단계 확인창이 이어받는다
+    }
+    function cancelWithdraw() {          // [취소] 버튼 전용
+      closeWithdrawModal();
       withdrawTargetId = null;
     }
     function onWithdrawInput() {
@@ -2876,11 +2903,12 @@
       el.classList.remove('show'); el.innerHTML = '';
     }
 
+    // [1단계] 비밀번호 확인 — 실제로는 POST /auth/verify-password
     function submitWithdraw() {
       const pw = document.getElementById('withdrawPassword').value;
       const warn = document.getElementById('warnWithdraw');
 
-      // 비밀번호 불일치 → 창을 닫지 않는다 (실제: 401 WRONG_PASSWORD)
+      // 불일치 → 창을 닫지 않고, 다음 단계로도 넘어가지 않는다 (실제: 401 WRONG_PASSWORD)
       if (!pw || pw !== currentPassword) {
         warn.innerHTML = '<i class="bi bi-exclamation-circle"></i> 비밀번호가 일치하지 않습니다.';
         warn.classList.add('show');
@@ -2889,9 +2917,22 @@
         return;
       }
 
+      // 확인됨 → [2단계] 최종 확인창
+      closeWithdrawModal();
+      document.getElementById('withdrawConfirmModal').classList.add('open');
+    }
+
+    function closeWithdrawConfirm() {
+      document.getElementById('withdrawConfirmModal').classList.remove('open');
+      withdrawTargetId = null;
+    }
+
+    // [3단계] 실제 삭제 — 실제로는 POST /complaints/{id}/withdraw (비밀번호를 다시 보낸다)
+    function confirmWithdraw() {
       const item = complaintsData.find(c => c.id === withdrawTargetId);
       if (item) item.status = '철회';            // 하드 삭제가 아니라 상태 전환
-      closeWithdrawModal();
+      document.getElementById('withdrawConfirmModal').classList.remove('open');
+      withdrawTargetId = null;
       renderDrawerFeed();
       renderAdminTable();
       updateAdminStats();
