@@ -3,29 +3,31 @@
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                 AWS Bedrock (Claude Sonnet 5)             │
-│    도구 호출: classify_and_refine_complaint (멀티턴)      │
-└───────────────────────────┬────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│              AWS Bedrock (Claude Sonnet 5)           │
+│   도구 둘: ask_followup · classify_and_refine        │
+│   tool_choice=any — 매 턴 하나는 반드시 부른다        │
+└───────────────────────────┬──────────────────────────┘
                             │
                  ┌──────────▼──────────┐
-                 │  FastAPI (uvicorn)   │
-                 │  워커 N개 · :8501     │
-                 │  정적 프론트도 서빙   │
-                 └───┬──────────────┬───┘
+                 │  FastAPI (uvicorn)  │
+                 │  워커 N개 · :8501    │
+                 │  정적 프론트도 서빙  │
+                 └───┬──────────────┬──┘
                      │              │
-        ┌────────────▼───┐   ┌──────▼──────┐
-        │  PostgreSQL    │   │    Redis    │
-        │  확정된 것      │   │ 살아있는 것  │
-        ├────────────────┤   ├─────────────┤
-        │ schools        │   │ sess:{id}   │
-        │ admin_codes    │   │ draft:{k}:  │
-        │ users          │   │   owner     │
-        │ complaints     │   └─────────────┘
+        ┌────────────▼────┐  ┌──────▼──────────────┐
+        │  PostgreSQL     │  │       Redis         │
+        │  확정된 것       │  │   살아있는 것        │
+        ├─────────────────┤  ├─────────────────────┤
+        │ schools         │  │ sess:{login_sid}    │
+        │ admin_codes     │  │ turn:{sid}:running  │
+        │ users           │  │ compact:{sid}       │
+        │ chat_sessions   │  │ sess_state:{sid}    │
+        │ complaints      │  └─────────────────────┘
         │ ..._conversations │
-        │ ..._comments   │
-        │ bedrock_logs   │
-        └────────────────┘
+        │ ..._comments    │
+        │ bedrock_logs    │
+        └─────────────────┘
 ```
 
 **워커가 여럿이라는 것의 의미**: LLM 호출이 수 초씩 걸린다. 워커가 하나면 한 사람이 민원을
@@ -35,7 +37,7 @@
 
 **역할 기반 화면 분기**: 목업 HTML은 상단 스위처로 학생/관리자 뷰를 자유 전환하지만, 실제 서비스에서는 로그인 세션의 `role`이 화면을 고정한다. 관리자 계정으로 로그인하면 관리자 대시보드만 보이고, 학생 계정은 작성+게시판만 보인다.
 
-**변환이 대화형이라는 것의 의미**: 학생 입력 한 번으로 끝나는 원샷 변환이 아니다. Bedrock이 정보 부족을 판단하면 도구 호출 대신 텍스트로 되묻는다. 이 질문-답변 왕복이 `complaint_conversations`에 전부 쌓이고, 최종적으로 충분한 정보가 모이면 최종 미리보기가 뜬다.
+**변환이 대화형이라는 것의 의미**: 학생 입력 한 번으로 끝나는 원샷 변환이 아니다. 모델은 매 턴 도구 **둘 중 하나**를 부른다 — 부족하면 `ask_followup`(질문 + 선택지), 충분하면 `classify_and_refine`(확정안). **어느 것을 불렀는지가 곧 "부족한가"의 답이다.** 이 왕복이 `complaint_conversations`에 전부 쌓이고, 확정되면 미리보기가 뜬다.
 
 **처리 상태가 열람/결정/진행 세 국면으로 나뉜다는 것의 의미**: 접수된 민원은 관리자가 아직 안 본 `미확인`으로 시작한다. 상세 화면을 여는 행위 자체가 `확인`으로 전환시키고(버튼 없음), `확인` 상태에서만 수락/보류/거절 결정이 가능해진다. 수락은 즉시 끝나는 게 아니라 `처리중`을 거쳐야 `해결완료`에 도달한다. 보류는 사유 코멘트가 없으면 전환 자체가 성립하지 않는다.
 
@@ -43,113 +45,23 @@
 
 ## Data Models
 
-### ER 관계도
+### 정본은 `requirements.md`다
 
-```
-schools (학교)
-  │ 1
-  ├──< admin_codes (N)              [school_id FK, CASCADE]
-  ├──< users (N)                    [school_id FK, CASCADE]
-  │      │ 1
-  │      └──< complaints (N)        [submitted_by_user_id FK, SET NULL]
-  │             (익명성 때문에 UI에는 절대 노출되지 않음 — 철회 소유권 검증 전용)
-  │
-  └──< complaints (N)               [school_id FK, CASCADE]
-         │ 1                         (모든 조회는 이 school_id로 스코프)
-         ├──< complaint_conversations (N)  [complaint_id FK, CASCADE]
-         │      (접수 전에는 complaint_id NULL, chat_session_id로만 묶여 있음)
-         └──< complaint_comments (N)       [complaint_id FK, CASCADE]
-                (author_user_id도 FK, ON DELETE SET NULL)
-```
+**ER 관계도와 PostgreSQL 스키마는 `requirements.md`의 Data Model 절이 정본이다.**
+여기에 다시 적지 않는다 — 두 곳에 두면 반드시 갈라진다(실제로 갈라져 있었다).
 
-| 관계 | 종류 | 삭제 전파 | 이유 |
-|---|---|---|---|
-| school → users | 1:N | CASCADE | 학교 삭제 시 계정 정리 (시드 데이터 관리용, 운영 UI에는 없음) |
-| school → admin_codes | 1:N | CASCADE | 학교와 함께 코드도 무의미해짐 |
-| school → complaints | 1:N | CASCADE | 학교 삭제 시 소속 민원도 정리 |
-| user → complaints (submitted_by_user_id) | 1:N | **SET NULL** | 민원 내용·상태·이력은 학교의 공공 기록이라 작성자 탈퇴와 무관하게 보존. 게시판은 이미 익명이라 표시에 영향 없음 |
-| complaint → complaint_conversations | 1:N | CASCADE | 민원이 지워지면(현재 UI엔 없음) 대화도 무의미 |
-| complaint → complaint_comments | 1:N | CASCADE | 위와 동일 |
-| user → complaint_comments (author_user_id) | 1:N | SET NULL | 코멘트 작성 관리자가 탈퇴해도 코멘트 텍스트는 남음 (게시판엔 "관리자"로만 표시되므로 작성자 식별이 애초에 노출되지 않음) |
+읽을 때 놓치기 쉬운 것만 짚는다.
 
-### PostgreSQL Schema
+| 관계 | 삭제 전파 | 왜 |
+|---|---|---|
+| `user → complaints` | **SET NULL** | 민원은 학교의 공공 기록이라 탈퇴와 무관하게 보존. 게시판은 이미 익명이라 표시에 영향 없음 |
+| `user → chat_sessions` | CASCADE | 대화 목록은 개인 것이므로 계정과 함께 사라진다 |
+| `chat_sessions → conversations` | **SET NULL** | ★ 세션이 사라져도 **접수된 민원의 근거 대화는 남아야 한다.** CASCADE면 탈퇴 시 민원은 남는데 원문이 비는 사고가 난다 |
+| `complaints → conversations` | CASCADE | 민원이 지워지면 대화도 무의미 |
+| `user → complaint_comments` | SET NULL | 코멘트 텍스트는 남는다. 표시가 어차피 "관리자"뿐이라 식별이 노출되지 않는다 |
 
-```sql
-CREATE TABLE schools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    email_domain TEXT UNIQUE NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE admin_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    school_id INTEGER NOT NULL,
-    code TEXT NOT NULL,
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
-);
-
-CREATE TABLE users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    school_id INTEGER NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('student', 'admin')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
-);
-
-CREATE TABLE complaints (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    school_id INTEGER NOT NULL,
-    submitted_by_user_id INTEGER,
-    category TEXT NOT NULL,
-    location TEXT NOT NULL,
-    refined_title TEXT NOT NULL,
-    refined_body TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT '미확인'
-        CHECK(status IN ('미확인', '확인', '처리중', '해결완료', '보류', '거절', '철회')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    confirmed_at TIMESTAMP,  -- 미확인→확인 자동전환 시각. NULL이면 아직 미확인
-    FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE,
-    FOREIGN KEY (submitted_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-);
-
-CREATE TABLE complaint_conversations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    complaint_id INTEGER,
-    chat_session_id INTEGER,           -- 접수 전 조회는 이걸로
-    role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
-    content TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE
-);
-
-CREATE TABLE complaint_comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    complaint_id INTEGER NOT NULL,
-    author_user_id INTEGER,
-    content TEXT NOT NULL,
-    is_hold_reason BOOLEAN NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (complaint_id) REFERENCES complaints(id) ON DELETE CASCADE,
-    FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE SET NULL
-);
-```
-
-**상태 전이 다이어그램**:
-```
-미확인 ──[상세 열람, 자동]──▶ 확인 ──[수락]──▶ 처리중 ──[해결 완료]──▶ 해결완료 (최종)
-                                │
-                                ├──[보류 + 코멘트 필수]──▶ 보류
-                                │
-                                └──[거절]──▶ 거절 (최종)
-
-(모든 상태) ──[학생, 비밀번호 확인]──▶ 철회 (최종, 조회 시 항상 제외)
-```
-`미확인 → 확인`만 자동(열람의 부작용)이고 나머지는 전부 관리자의 명시적 버튼 클릭이다. `확인` 상태에서만 수락/보류/거절 세 버튼이 나타나며, `처리중` 이후에는 "해결 완료" 버튼 하나만 존재한다 (역방향 전환 없음 — Out of Scope).
-
----
+**대화 행은 두 주인을 갖는다.** 접수 전에는 `chat_session_id`로, 접수 후에는 두 FK가
+모두 채워져 어느 쪽으로 찾아도 같은 행이 나온다.
 
 ## File Structure
 
@@ -187,473 +99,79 @@ hackerthon2_llm_1/
 
 ---
 
-## Session Container Rules (서버 세션 · 클라이언트 상태)
+## 상태를 어디에 두나
 
-DB(영속)와 휘발성 상태의 경계를 구현 전에 못박는다. 로그인 세션은 HttpOnly 쿠키 + 서버 저장소라 새로고침을 견디고, 화면 상태(입력 중인 텍스트, 열어둔 모달)만 브라우저에 남아 새로고침에 사라진다. 어느 쪽에 둘지 헷갈리면 새로고침 시 데이터가 사라지거나 탭 간에 상태가 새는 사고가 난다.
+**정본은 `requirements.md`의 "상태를 어디에 두나" 절과 `docs/backend-design.md` §7·§7-2다.**
+여기에 표를 다시 그리지 않는다.
 
-### 세션에만 두는 것 (탭 닫으면 소멸, 재조회로 복구 불가)
+요점 셋.
 
-| 키 | 내용 | 갱신 지점 |
-|---|---|---|
-| `logged_in`, `user_id`, `school_id`, `role` | 인증 결과 | 로그인/로그아웃 |
-> **대화 세션 컨테이너는 `requirements.md`와 `docs/backend-design.md` §7이 정본이다.**
->
-> 요약하면 세 겹이다 — **현재 대화(버퍼)** → 차면 **과거 대화**로 밀리고 → 쌓이면
-> **이전 세션주제와 함께** 압축해 새 **세션주제**를 만든다. 압축이 누적되므로
-> 대화가 길어져도 초반 맥락이 사라지지 않는다.
->
-> | 무엇 | 어디 |
-> |---|---|
-> | 대화 전체(화면용) | PostgreSQL `complaint_conversations` |
-> | 세션주제·제목·압축 경계 | PostgreSQL `chat_sessions` |
-> | 로그인 세션 | Redis `sess:{login_sid}` |
-> | 턴 잠금·압축 잠금·단계 캐시 | Redis `turn:{sid}:running` · `compact:{sid}` · `sess_state:{sid}` |
->
-> **소유자는 `chat_sessions.user_id`가 쥔다.** Redis에 두지 않는다 —
-> 세션이 "과거 대화" 목록에 남아야 하므로 어차피 영속 행이다.
+1. **로그인 세션은 HttpOnly 쿠키 + Redis.** 새로고침해도, 탭을 닫았다 열어도 유지된다.
+   워커가 여럿이라 프로세스 메모리에 둘 수 없다.
+2. **대화는 매 턴 즉시 PostgreSQL에 쓴다.** 작업본 방식을 쓰지 않는다 —
+   여기 쌓이는 것은 append-only 대화라 한 턴이 곧 확정이고, 미루면 새로고침에 사라진다.
+   **나갈 때 저장하는 동작이 없다.**
+3. **Redis에는 잃어도 되는 것만.** 턴 잠금·압축 잠금·단계 캐시.
+   Redis가 통째로 죽어도 민원과 대화는 사라지지 않는다.
+
+**대화 세션 컨테이너는 세 겹이다** — 현재 대화(버퍼) → 차면 과거 대화로 밀리고 →
+쌓이면 **이전 세션주제와 함께** 압축해 새 세션주제. 압축이 누적되므로 대화가 길어져도
+초반 맥락이 사라지지 않는다.
+
+**소유자는 `chat_sessions.user_id`가 쥔다.** 세션이 "과거 대화" 목록에 남아야 하므로
+어차피 영속 행이고, 행이 있으면 소유자도 거기 있는 게 맞다.
 
 ---
 
 ## Component Design
 
-### 1. DatabaseManager
+**모듈 구성과 계층 규칙은 `docs/backend-design.md` §2가 정본이다.**
+클래스 목록이나 메서드 시그니처를 여기에 다시 적지 않는다.
 
-**책임**: 학교, 계정, 민원, 대화, 코멘트의 CRUD. 민원 관련 조회는 모두 `school_id`로 스코프된다.
+> 이전 판은 `DatabaseManager`·`BedrockClient`·`ComplaintService`·`AuthManager` 네 클래스로
+> 그려져 있었다. 지금은 **계층으로 나뉜다** — `routes`(파사드) → `services`(판단) →
+> `repo`(SQL) / `session`(Redis) / `llm`(Bedrock). 같은 것을 두 방식으로 그려두면 갈라진다.
 
-```python
-class DatabaseManager:
-    def __init__(self, dsn: str = os.environ["DATABASE_URL"]):
-        self.pool = psycopg_pool.ConnectionPool(dsn)   # 워커마다 커넥션 풀
-        self.conn.execute("PRAGMA foreign_keys = ON")
+여기서는 **구현 방식과 무관하게 지켜야 할 도메인 규칙**만 남긴다.
 
-    # --- 학교 / 도메인 / 관리자 코드 (시드 전용) ---
-    def find_school_by_email(self, email: str) -> dict | None:
-        domain = email.split('@')[-1].lower()
-        cursor = self.conn.execute(
-            "SELECT id, name FROM schools WHERE email_domain = ?", (domain,)
-        )
-        row = cursor.fetchone()
-        return {"id": row[0], "name": row[1]} if row else None
+### 상태 전이 규칙
 
-    def verify_admin_code(self, school_id: int, code: str) -> bool:
-        cursor = self.conn.execute(
-            "SELECT 1 FROM admin_codes WHERE school_id = ? AND code = ?",
-            (school_id, code)
-        )
-        return cursor.fetchone() is not None
+| 전이 | 전제 | 비고 |
+|---|---|---|
+| `미확인 → 확인` | 관리자가 상세를 **열람** | 버튼이 아니다. 여러 번 열어도 안전(멱등) |
+| `확인 → 처리중` | 수락 | `미확인`에서는 불가 — 보지도 않고 결정할 수 없다 |
+| `처리중 → 해결완료` | 해결 완료 | **건너뛸 수 없다.** `확인`에서 바로 갈 수 없다 |
+| `확인 → 보류` | 보류 + **사유 필수** | 상태와 사유가 함께 성립한다. 하나만 남지 않는다 |
+| `확인 → 거절` | 거절 | 최종 상태 |
+| `무엇이든 → 철회` | 학생 본인 + 비밀번호 | 관리자 전이와 독립 |
 
-    # --- 계정 ---
-    def create_user(self, school_id: int, email: str, password: str, role: str) -> int:
-        password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-        cursor = self.conn.execute(
-            "INSERT INTO users (school_id, email, password_hash, role) VALUES (?, ?, ?, ?)",
-            (school_id, email, password_hash, role)
-        )
-        self.conn.commit()
-        return cursor.lastrowid
+**전이 검증은 조회 후 판정이 아니라 `UPDATE ... WHERE status=<전제>`다.**
+워커가 여럿이라 조회 후 판정하면 두 관리자가 동시에 눌렀을 때 둘 다 통과한다.
 
-    def authenticate_user(self, email: str, password: str) -> dict | None:
-        cursor = self.conn.execute(
-            "SELECT id, school_id, role, password_hash FROM users WHERE email = ?", (email,)
-        )
-        row = cursor.fetchone()
-        if not row:
-            return None
-        user_id, school_id, role, password_hash = row
-        if bcrypt.checkpw(password.encode(), password_hash):
-            return {"id": user_id, "school_id": school_id, "role": role}
-        return None
+### LLM 계약
 
-    def verify_password(self, user_id: int, password: str) -> bool:
-        cursor = self.conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,))
-        row = cursor.fetchone()
-        return bool(row) and bcrypt.checkpw(password.encode(), row[0])
+모델은 매 턴 **도구 둘 중 하나**를 반드시 부른다(`tool_choice: any`).
 
-    def delete_user(self, user_id: int):
-        self.conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-        self.conn.commit()
+| 부른 것 | 뜻 | 담긴 것 |
+|---|---|---|
+| `ask_followup` | 부족하다 | `missing` · `question` · `choices[]` |
+| `classify_and_refine_complaint` | 충분하다 | 카테고리(**enum 7종**) · 위치 · 제목 · 본문 · 세션 제목 |
 
-    def change_password(self, user_id: int, new_password: str):
-        password_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-        self.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
-        self.conn.commit()
+**"부족한가"를 도구의 부재로 읽지 않는다.** 부재로 읽으면 되묻는 문장만 얻고
+**선택지를 만들 수 없다.** 억지 채움은 도구를 나누는 것으로 막는다 —
+부족할 때 부를 도구가 따로 있으면 확정 도구를 억지로 부를 이유가 없다.
 
-    # --- 대화 ---
-    def add_conversation_turn(self, session_id: int, role: str, content: str,
-                              choices: list | None = None, refined_json: dict | None = None):
-        self.conn.execute(
-            "INSERT INTO complaint_conversations "
-            "(chat_session_id, role, content, choices, refined_json) VALUES (%s,%s,%s,%s,%s)",
-            (session_id, role, content, choices, refined_json)
-        )
-        self.conn.commit()
+**카테고리를 `enum`으로 묶는다.** 자유 문자열이면 매번 미묘하게 다른 값이 와서
+`complaints.category`와 매칭이 깨진다.
 
-    def get_conversation(self, session_id: int) -> list[dict]:
-        cursor = self.conn.execute(
-            "SELECT role, content, choices FROM complaint_conversations "
-            "WHERE chat_session_id = %s ORDER BY id",
-            (session_id,)
-        )
-        return [{"role": r[0], "content": r[1]} for r in cursor.fetchall()]
+### 격리와 익명
 
-    def get_conversation_by_complaint(self, complaint_id: int) -> list[dict]:
-        cursor = self.conn.execute(
-            "SELECT role, content FROM complaint_conversations WHERE complaint_id = ? ORDER BY created_at",
-            (complaint_id,)
-        )
-        return [{"role": r[0], "content": r[1]} for r in cursor.fetchall()]
+- **`school_id` 필터는 `repo` 계층이 강제한다.** 모든 조회 함수가 필수 인자로 받는다 —
+  서비스마다 손으로 붙이면 언젠가 하나를 빠뜨린다.
+- **작성자 id는 응답에 실리지 않는다.** 서버가 세션과 대조해 `is_mine` 불린 하나로 답한다.
+- **철회 제외도 `repo`가 한다.** `status <> '철회'`를 조회 함수 안에 넣어두면 서비스가 잊어도 새지 않는다.
 
-    # --- 민원 생성/조회 (school_id로 항상 스코프) ---
-    def create_complaint(self, school_id: int, user_id: int, session_id: int,
-                          category: str, location: str, title: str, body: str) -> int:
-        """상태는 항상 '미확인'으로 시작 (DEFAULT)."""
-        cursor = self.conn.execute(
-            """INSERT INTO complaints
-               (school_id, submitted_by_user_id, category, location, refined_title, refined_body)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (school_id, user_id, category, location, title, body)
-        )
-        complaint_id = cursor.lastrowid
-        self.conn.execute(
-            "UPDATE complaint_conversations SET complaint_id = %s WHERE chat_session_id = %s",
-            (complaint_id, session_id)
-        )
-        self.conn.commit()
-        return complaint_id
-
-    def list_complaints(self, school_id: int, status: str | None = None) -> list[dict]:
-        """게시판/관리자 테이블 공용. 철회는 항상 제외."""
-        query = """SELECT id, category, location, refined_title, refined_body,
-                          status, created_at, confirmed_at, submitted_by_user_id
-                   FROM complaints WHERE school_id = ? AND status != '철회'"""
-        params = [school_id]
-        if status:
-            query += " AND status = ?"
-            params.append(status)
-        query += " ORDER BY created_at DESC"
-
-        cursor = self.conn.execute(query, params)
-        cols = ["id", "category", "location", "refined_title", "refined_body",
-                "status", "created_at", "confirmed_at", "submitted_by_user_id"]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
-
-    def get_complaint(self, complaint_id: int, school_id: int) -> dict | None:
-        cursor = self.conn.execute(
-            """SELECT id, category, location, refined_title, refined_body, status, created_at
-               FROM complaints WHERE id = ? AND school_id = ?""",
-            (complaint_id, school_id)
-        )
-        row = cursor.fetchone()
-        if not row:
-            return None
-        cols = ["id", "category", "location", "refined_title", "refined_body", "status", "created_at"]
-        return dict(zip(cols, row))
-
-    def get_complaint_stats(self, school_id: int) -> dict:
-        cursor = self.conn.execute(
-            "SELECT status, COUNT(*) FROM complaints WHERE school_id = ? AND status != '철회' GROUP BY status",
-            (school_id,)
-        )
-        counts = {row[0]: row[1] for row in cursor.fetchall()}
-        return {
-            "all": sum(counts.values()),
-            "미확인": counts.get("미확인", 0),
-            "확인": counts.get("확인", 0),
-            "처리중": counts.get("처리중", 0),
-            "해결완료": counts.get("해결완료", 0),
-            "보류": counts.get("보류", 0),
-            "거절": counts.get("거절", 0),
-        }
-
-    # --- 상태 전이 (전부 school_id를 WHERE에 포함) ---
-    def confirm_complaint(self, complaint_id: int, school_id: int):
-        """미확인 → 확인. 이미 확인 이후 상태면 아무것도 하지 않는다 (최초 열람만 기록)."""
-        self.conn.execute(
-            """UPDATE complaints SET status = '확인', confirmed_at = CURRENT_TIMESTAMP
-               WHERE id = ? AND school_id = ? AND status = '미확인'""",
-            (complaint_id, school_id)
-        )
-        self.conn.commit()
-
-    def accept_complaint(self, complaint_id: int, school_id: int) -> bool:
-        """확인 → 처리중. 확인 상태가 아니면 실패(rowcount=0)."""
-        cursor = self.conn.execute(
-            "UPDATE complaints SET status = '처리중' WHERE id = ? AND school_id = ? AND status = '확인'",
-            (complaint_id, school_id)
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
-
-    def resolve_complaint(self, complaint_id: int, school_id: int) -> bool:
-        """처리중 → 해결완료. 처리중이 아니면 실패."""
-        cursor = self.conn.execute(
-            "UPDATE complaints SET status = '해결완료' WHERE id = ? AND school_id = ? AND status = '처리중'",
-            (complaint_id, school_id)
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
-
-    def hold_complaint(self, complaint_id: int, school_id: int, author_user_id: int, reason: str) -> bool:
-        """확인 → 보류. reason은 필수(빈 문자열 금지, 호출 전 검증은 ComplaintService 책임).
-        상태 전환과 사유 코멘트 생성을 하나의 트랜잭션으로 묶는다."""
-        cursor = self.conn.execute(
-            "UPDATE complaints SET status = '보류' WHERE id = ? AND school_id = ? AND status = '확인'",
-            (complaint_id, school_id)
-        )
-        if cursor.rowcount == 0:
-            self.conn.rollback()
-            return False
-        self.conn.execute(
-            """INSERT INTO complaint_comments (complaint_id, author_user_id, content, is_hold_reason)
-               VALUES (?, ?, ?, 1)""",
-            (complaint_id, author_user_id, reason)
-        )
-        self.conn.commit()
-        return True
-
-    def reject_complaint(self, complaint_id: int, school_id: int) -> bool:
-        """확인 → 거절. 코멘트는 선택(별도 add_comment로)."""
-        cursor = self.conn.execute(
-            "UPDATE complaints SET status = '거절' WHERE id = ? AND school_id = ? AND status = '확인'",
-            (complaint_id, school_id)
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
-
-    def withdraw_complaint(self, complaint_id: int, user_id: int) -> bool:
-        """학생 본인 확인 후 철회. 상태 무관하게 항상 허용 (Out of Scope 정책 참고)."""
-        cursor = self.conn.execute(
-            "UPDATE complaints SET status = '철회' WHERE id = ? AND submitted_by_user_id = ?",
-            (complaint_id, user_id)
-        )
-        self.conn.commit()
-        return cursor.rowcount > 0
-
-    # --- 코멘트 (상태와 무관하게 언제든 추가 가능) ---
-    def add_comment(self, complaint_id: int, author_user_id: int, content: str):
-        self.conn.execute(
-            "INSERT INTO complaint_comments (complaint_id, author_user_id, content) VALUES (?, ?, ?)",
-            (complaint_id, author_user_id, content)
-        )
-        self.conn.commit()
-
-    def get_comments(self, complaint_id: int) -> list[dict]:
-        cursor = self.conn.execute(
-            """SELECT content, is_hold_reason, created_at FROM complaint_comments
-               WHERE complaint_id = ? ORDER BY created_at""",
-            (complaint_id,)
-        )
-        return [{"content": r[0], "is_hold_reason": bool(r[1]), "created_at": r[2]} for r in cursor.fetchall()]
-```
-
-**왜 상태 전이 메서드를 5개로 쪼갰는가**: 이전 설계의 `update_complaint_status(id, school_id, new_status)` 하나로는 "어느 상태에서 어느 상태로만 허용되는지"를 호출부(UI)가 알아야 했다. `confirm/accept/resolve/hold/reject`로 나누면 각 메서드의 `WHERE ... AND status = '<선행상태>'` 조건이 전이 규칙 자체를 DB 레이어에 강제한다 — 예를 들어 `미확인` 상태에 `accept_complaint`를 호출해도 `WHERE status = '확인'`에 안 걸려서 `rowcount=0`으로 조용히 실패한다. UI 버튼은 애초에 `확인` 상태에서만 노출되므로 정상 흐름에서 이 실패는 발생하지 않지만, 방어적 계층으로 기능한다.
-
-### 2. BedrockClient — 멀티턴 분류+정제 (도구 호출은 강제하지 않음)
-
-**책임**: 맥락(요약 + 최근 대화)을 Bedrock에 넘기고, 모델이 **도구 둘 중 하나를 고르게** 한다.
-
-| 모델이 부른 것 | 뜻 |
-|---|---|
-| `ask_followup(missing, question, choices[])` | **부족하다** — 되물을 질문과 선택지를 함께 준다 |
-| `classify_and_refine_complaint(...)` | 충분하다 — 확정안 |
-
-**`tool_choice: {"type": "any"}`로 둘 중 하나를 반드시 부르게 강제한다.**
-
-> 이전 설계는 "부족하면 도구를 안 부르고 일반 텍스트로 되묻는다"였고, 강제하면 모델이
-> 억지로 필드를 채운다고 봤다. **그런데 부족을 '도구의 부재'로 읽으면 되묻는 문장만 얻고
-> 선택지를 만들 수 없다.** 억지 채움은 도구를 나누는 것으로 막는다 —
-> 부족할 때 부를 도구가 따로 있으면 확정 도구를 억지로 부를 이유가 없다.
-
-상세 규격은 `docs/backend-design.md` §8을 정본으로 본다.
-
-```python
-CATEGORIES = ["냉난방 / 공조", "위생 / 배관", "전기 / 설비",
-              "영상 / 기자재", "공간 / 편의", "안전 / 보안", "기타"]
-
-class BedrockClient:
-    def __init__(self, model_id: str = "global.anthropic.claude-sonnet-5"):
-        self.bedrock = boto3.client('bedrock-runtime')  # 리전 지정 금지
-        self.model_id = model_id
-
-    def _refine_tool_schema(self) -> dict:
-        return {
-            "name": "classify_and_refine_complaint",
-            "description": (
-                "카테고리/위치/제목/본문을 확정할 수 있을 만큼 정보가 충분할 때만 호출한다. "
-                "부족하면 이 도구를 호출하지 말고 대신 일반 텍스트로 되물어라."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "enum": CATEGORIES},
-                    "location": {"type": "string", "description": "건물명/층/호실 등 구체적 위치"},
-                    "refined_title": {"type": "string", "description": "정중한 공문서 제목, 30자 내외"},
-                    "refined_body": {"type": "string", "description": "현상/영향/요청 3단 구조 본문"}
-                },
-                "required": ["category", "location", "refined_title", "refined_body"]
-            }
-        }
-
-    def refine_complaint(self, conversation: list[dict]) -> dict:
-        """반환: is_complete=False → missing·question·choices / True → 확정안 + session_title"""
-        messages = [
-            {"role": "user" if t["role"] == "student" else "assistant", "content": t["content"]}
-            for t in conversation
-        ]
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1024,
-            "tools": [self._refine_tool_schema()],
-            "messages": messages
-        })
-        response = self.bedrock.invoke_model(modelId=self.model_id, body=body)
-        response_body = json.loads(response['body'].read())
-
-        for block in response_body.get('content', []):
-            if block.get('type') == 'tool_use':
-                return {"is_complete": True, **block['input']}
-
-        text_blocks = [b['text'] for b in response_body.get('content', []) if b.get('type') == 'text']
-        follow_up = text_blocks[0] if text_blocks else "추가 정보를 알려주세요."
-        return {"is_complete": False, **block["input"]}   # missing·question·choices
-```
-
-### 3. ComplaintService
-
-**책임**: 대화 왕복 → 정제 → 접수 → 상태 전이(확인 자동화, 결정 검증) → 철회 흐름 조율. UI는 이 서비스만 호출한다.
-
-```python
-class ComplaintService:
-    def __init__(self, db: DatabaseManager, bedrock: BedrockClient):
-        self.db = db
-        self.bedrock = bedrock
-
-    def send_message(self, session_id: int, student_message: str) -> dict:
-        self.db.add_conversation_turn(session_id, role='student', content=student_message)
-        context, buffer = self.db.load_context(session_id)   # 세션주제 + 압축 경계 이후 원문
-        result = self.bedrock.refine_complaint(conversation)
-
-        ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
-                       else result.get("question", "추가 정보를 알려주세요."))
-        self.db.add_conversation_turn(session_id, role='assistant', content=ai_message,
-                                      choices=result.get('choices'),
-                                      refined_json=result if result.get('is_complete') else None)
-        return result
-
-    def submit(self, school_id: int, user_id: int, session_id: int) -> int:
-        # 확정안은 서버가 보관한 마지막 refined_json에서 꺼낸다 (프론트가 보내지 않는다)
-        return self.db.create_complaint(
-            school_id=school_id, user_id=user_id, session_id=session_id,
-            category=refined["category"], location=refined["location"],
-            title=refined["refined_title"], body=refined["refined_body"],
-        )
-
-    def open_detail(self, complaint_id: int, school_id: int):
-        """관리자가 상세 화면을 열 때마다 호출. 미확인이었다면 확인으로 자동 전환.
-        이미 확인 이후 상태면 confirm_complaint 내부의 WHERE status='미확인' 조건에 안 걸려 아무 일도 없다."""
-        self.db.confirm_complaint(complaint_id, school_id)
-
-    def accept(self, complaint_id: int, school_id: int) -> tuple[bool, str]:
-        ok = self.db.accept_complaint(complaint_id, school_id)
-        return (True, "처리중으로 전환되었습니다") if ok else (False, "확인 상태의 민원만 수락할 수 있습니다")
-
-    def resolve(self, complaint_id: int, school_id: int) -> tuple[bool, str]:
-        ok = self.db.resolve_complaint(complaint_id, school_id)
-        return (True, "해결 완료로 전환되었습니다") if ok else (False, "처리중 상태의 민원만 완료 처리할 수 있습니다")
-
-    def hold(self, complaint_id: int, school_id: int, author_user_id: int, reason: str) -> tuple[bool, str]:
-        """보류는 사유 코멘트가 필수. 빈 값이면 DB 호출 자체를 하지 않는다."""
-        if not reason or not reason.strip():
-            return False, "보류 사유를 입력해야 합니다"
-        ok = self.db.hold_complaint(complaint_id, school_id, author_user_id, reason.strip())
-        return (True, "보류로 전환되었습니다") if ok else (False, "확인 상태의 민원만 보류할 수 있습니다")
-
-    def reject(self, complaint_id: int, school_id: int) -> tuple[bool, str]:
-        ok = self.db.reject_complaint(complaint_id, school_id)
-        return (True, "거절로 전환되었습니다") if ok else (False, "확인 상태의 민원만 거절할 수 있습니다")
-
-    def add_comment(self, complaint_id: int, author_user_id: int, content: str) -> tuple[bool, str]:
-        """상태와 무관하게 언제든 호출 가능."""
-        if not content or not content.strip():
-            return False, "코멘트 내용을 입력해주세요"
-        self.db.add_comment(complaint_id, author_user_id, content.strip())
-        return True, "코멘트가 등록되었습니다"
-
-    def withdraw(self, complaint_id: int, user_id: int, password: str) -> tuple[bool, str]:
-        if not self.db.verify_password(user_id, password):
-            return False, "비밀번호가 올바르지 않습니다"
-        success = self.db.withdraw_complaint(complaint_id, user_id)
-        if not success:
-            return False, "본인이 접수한 민원만 철회할 수 있습니다"
-        return True, "민원이 철회되었습니다"
-```
-
-### 4. AuthManager
-
-**책임**: 가입(이메일 도메인 → 학교 자동 매칭, 역할, 관리자 코드 검증), 로그인, 세션 스코프 고정.
-
-```python
-class AuthManager:
-    def __init__(self, db: DatabaseManager):
-        self.db = db
-
-    def show_auth_page(self):
-        tab_login, tab_signup = st.tabs(["로그인", "가입하기"])
-        with tab_login:
-            self._login_form()
-        with tab_signup:
-            self._signup_form()
-
-    def _login_form(self):
-        email = st.text_input("학교 이메일", key="login_email")
-        password = st.text_input("비밀번호", type="password", key="login_password")
-        if st.button("로그인", type="primary"):
-            user = self.db.authenticate_user(email, password)
-            if user:
-                session_id = redis_session.create(
-                    user_id=user["id"], school_id=user["school_id"], role=user["role"]
-                )
-                response.set_cookie("sid", session_id, httponly=True, samesite="lax")
-            else:
-                st.error("이메일 또는 비밀번호가 올바르지 않습니다")
-
-    def _signup_form(self):
-        email = st.text_input("학교 이메일 (예: student1@chosun.ac.kr)", key="signup_email")
-        password = st.text_input("비밀번호 (8자 이상)", type="password", key="signup_password")
-        role = st.radio("역할", ["student", "admin"], format_func=lambda r: "학생" if r == "student" else "관리자")
-
-        admin_code = st.text_input("관리자 코드", type="password") if role == "admin" else None
-
-        if st.button("가입하기", type="primary"):
-            if len(password) < 8:
-                st.error("비밀번호는 8자 이상이어야 합니다")
-                return
-            school = self.db.find_school_by_email(email)
-            if not school:
-                st.error("지원하지 않는 학교 이메일입니다. 소속 학교 이메일로 다시 시도해주세요.")
-                return
-            if role == "admin" and (not admin_code or not self.db.verify_admin_code(school["id"], admin_code)):
-                st.error("관리자 코드가 올바르지 않습니다")
-                return
-            try:
-                self.db.create_user(school["id"], email, password, role)
-                st.success(f"{school['name']} 가입 완료! 로그인해주세요")
-            except psycopg.errors.UniqueViolation:
-                st.error("이미 존재하는 이메일입니다")
-
-    def require_auth(self):
-        if not request.session:      # 쿠키의 sid로 Redis 조회, 없으면
-            self.show_auth_page()
-            st.stop()
-
-    def logout(self):
-        for key in ['logged_in', 'user_id', 'school_id', 'role']:
-            redis_session.delete(session_id)   # Redis에서 세션 삭제 + 쿠키 만료
-```
-
-**보안 노트**: 학교·이메일 도메인·관리자 코드는 가입 화면에서 생성되지 않는다. 전부 `seed_schools.py`로 배포 전에 심는다.
-
----
+상세 규격은 `docs/backend-design.md`, 밖으로 보이는 계약은 `docs/api-contract.md`.
 
 ## UI Design
 

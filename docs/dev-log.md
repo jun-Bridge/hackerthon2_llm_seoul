@@ -792,3 +792,27 @@ SQL과 구현 세부를 정규식으로 걷어낼 때 코드 블록이 함께 �
   - `design.md`의 파일 구조가 아직 `lib/`·`pages/`·`data/app.db`(Streamlit)였고 UI 절에 `st.rerun()`이 다섯 곳 있었다. 계층 구조로 바꾸고 **UI 절은 계약서 §4-0을 정본으로 가리키게** 했다.
 
 **이번 라운드에서 굳어진 규칙 하나**: 같은 내용을 두 문서에 적어두면 반드시 갈라진다. 스키마 DDL(`requirements` ↔ `tasks`), 화면-API 대응(`design` ↔ `contract`), 세션 컨테이너(세 곳) — 전부 갈라져 있었다. **정본 한 곳을 정하고 나머지는 가리키게** 바꿨다.
+
+## [2026-08-27] 적대적 검토 8차 — `.kiro/design.md` 통독 9건
+`design.md`는 패치만 하고 통독한 적이 없었다. 865줄을 읽었더니 **문서 절반이 옛 설계였다.**
+
+**구조가 정면으로 달랐다 1건 (제일 큼)**
+- **Component Design이 4개 클래스 모놀리스**(`DatabaseManager`·`BedrockClient`·`ComplaintService`·`AuthManager`)였다. 백엔드 설계는 **계층 분리**(`routes` → `services` → `repo`/`session`/`llm`)다. 같은 것을 두 방식으로 그려둔 것이라 구현자가 어느 쪽을 따라야 할지 알 수 없다.
+  → **클래스·메서드 목록을 걷어내고 정본(`backend-design.md` §2)을 가리키게** 했다. 대신 **구현 방식과 무관하게 지켜야 할 도메인 규칙**만 남겼다 — 상태 전이표, LLM 도구 계약, 격리·익명 규칙. 이건 어떤 구조로 짜든 유효하다.
+
+**중복이 갈라진 것 2건**
+- **PostgreSQL Schema 절이 통째로 SQLite 문법이었다.** `INTEGER PRIMARY KEY AUTOINCREMENT`·`TEXT`·`TIMESTAMP DEFAULT CURRENT_TIMESTAMP` 23곳. 제목만 "PostgreSQL"로 바꾸고 내용은 안 고쳤던 것이다. `chat_sessions`·`bedrock_logs`·`aliases`·`choices`도 없었다.
+- ER 관계도에 `chat_sessions`가 없고 `conversations`의 두 FK도 없었다.
+  → 둘 다 **`requirements.md`를 정본으로 가리키게** 하고, 놓치기 쉬운 삭제 전파 다섯 줄만 표로 남겼다.
+
+**내 앞선 편집이 깨뜨린 것 1건**
+- "세션에만 두는 것" 표가 **한 줄만 남고 인용문이 그 자리에 끼어들어** 있었다. 표 한가운데를 치환한 결과다. 절 전체를 다시 썼다.
+
+**옛 설계 잔재 5건**
+- 아키텍처 도식에 `draft:{k}:owner`(제거된 키), `chat_sessions` 없음, 도구 하나.
+- **"Bedrock이 정보 부족을 판단하면 도구 호출 대신 텍스트로 되묻는다"** — §455는 고쳤는데 §36의 같은 서술을 못 봤다.
+- BedrockClient 절 제목이 "(도구 호출은 강제하지 않음)".
+- File Structure가 `lib/`·`pages/`·`data/app.db`.
+- `tasks.md`의 TASK-401 제목이 아직 `DatabaseManager`.
+
+**같은 교훈이 세 번째다.** 스키마(`requirements`↔`tasks`↔`design`), 화면-API(`design`↔`contract`), 컴포넌트 구조(`design`↔`backend-design`), 세션 컨테이너(세 곳) — **복사해둔 것은 전부 갈라져 있었다.** 이번 라운드로 `.kiro/design.md`의 중복 구간을 다 걷어냈다. 865줄 → 384줄.

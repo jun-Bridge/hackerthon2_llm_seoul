@@ -308,7 +308,7 @@ def seed():
 
 ## M4: 관리자 대시보드 (열람 자동확인 · 3단 결정 · 코멘트)
 
-### TASK-401: DatabaseManager 상태 전이 메서드 구현
+### TASK-401: repo 계층 — 상태 전이 (UPDATE ... WHERE)
 **Depends on**: TASK-301
 **Status**: OPEN
 
