@@ -1,9 +1,9 @@
 # canvas/editor/ — 본문 편집기
 
 구현 예정
-- `DocumentEditor.tsx` — 문서 본문 편집. 로컬 편집 상태 관리, 저장 시점 결정
-- `SelectionToolbar.tsx` — 텍스트 선택 시 뜨는 액션 바("다시 써줘"·"짧게"·"직접 지시")
-- `InstructionPopover.tsx` — 선택 영역에 줄 지시문 입력
-- `PendingEditOverlay.tsx` — LLM 응답 대기 중 해당 구간 표시
+- `DocumentEditor.tsx` — 마크다운 본문 편집. 블록 단위 렌더·편집
+- `Block.tsx` — 블록 하나. 포커스·편집·선택
+- `LockOverlay.tsx` — **LLM 작업 중 블러 + 입력 차단.** 잠금 해제 시 걷힌다
+- `useBlockEdit.ts` 연동 — 편집 반영 요청, 409(잠금 충돌) 처리
 
-선택 범위(offset)를 백엔드에 그대로 넘긴다 — 백엔드가 원문 기준으로 부분 치환한다.
+블록은 id로 다룬다. 인덱스나 문자 위치로 가리키지 않는다.
