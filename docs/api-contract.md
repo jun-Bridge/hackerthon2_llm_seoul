@@ -6,6 +6,25 @@ _2026-08-27 · 상태: 합의 대기_
 여기 적힌 것이 두 쪽의 유일한 접점이다. 프론트는 이 함수들을 호출해 화면을 만들고,
 백엔드는 이 규약대로 응답한다. **한쪽이 이 문서를 어기면 그건 버그다.**
 
+### 이 문서의 경계
+
+**여기에 있는 것** — 주소·인증 방식·요청과 응답의 모양·오류 코드·화면 흐름.
+즉 **밖에서 보이는 것**뿐이다.
+
+**여기에 없는 것** — 어느 테이블에 무엇이 들어가는지, SQL이 어떻게 생겼는지,
+Redis 키가 무엇인지, 트랜잭션 경계가 어디인지, Bedrock을 어떻게 부르는지.
+전부 `backend-design.md`에 있다.
+
+> **FastAPI 라우터는 파사드다.** 이 문서에 적힌 함수 시그니처는 그 파사드의 모양이고,
+> 실제 일은 그 안에서 `services` → `repo`/`session`/`llm`으로 나뉘어 처리된다.
+> **내부 구조가 바뀌어도 이 계약은 그대로여야 한다.** 그게 갈라 둔 이유다.
+
+| 문서 | 무엇 | 누가 |
+|---|---|---|
+| `api-contract.md` (여기) | 연결부 | 프론트·백 공통 |
+| `backend-design.md` | 서버 안쪽 모듈·흐름 | 백엔드 |
+| `.kiro/specs/complaint-assistant/` | 무엇을 왜 만드나 | 전원 |
+
 기능 정의의 출처는 `.kiro/specs/complaint-assistant/`(정본)이고, 이 문서는 그것을
 HTTP 경계로 옮긴 것이다. 기능 자체가 궁금하면 그쪽을 본다.
 
@@ -253,7 +272,6 @@ export async function listSchools() { ... }   // → School[]
 ```python
 @router.get("/schools")
 def list_schools() -> list[SchoolOut]:
-    return db.list_schools()      # id는 내보내지 않는다 — 가입에 school_id를 쓰지 않으므로
 ```
 
 ```ts
@@ -296,16 +314,12 @@ export async function signup(email, password, adminCode = null) { ... }   // →
 ```python
 @router.post("/auth/signup", status_code=201)
 def signup(body: SignupIn, response: Response) -> SignupOut:
-    school = db.find_school_by_email(body.email)        # 없으면 400 UNSUPPORTED_DOMAIN
     # 역할은 코드가 정한다. 클라이언트가 "나 교직원"이라고 주장할 방법이 없다
     code = (body.admin_code or "").strip()
     if not code:
         role = "student"
-    elif db.verify_admin_code(school["id"], code):
         role = "admin"
     else:
-        raise BadRequest("INVALID_ADMIN_CODE")     # 넣었는데 안 맞으면 막는다
-    user_id = db.create_user(school["id"], body.email, body.password, role)
     response.set_cookie(...)                            # 가입 즉시 로그인
 ```
 
@@ -331,7 +345,7 @@ def signup(body: SignupIn, response: Response) -> SignupOut:
 
 **응답에 `role`을 함께 준다.** 가입 직후 어느 화면으로 갈지 프론트가 알아야 한다.
 
-**건드리는 것** — `schools` 조회 → `admin_codes` 조회 → `users` INSERT → 세션 생성
+**효과** — 계정이 만들어지고 **바로 로그인 상태가 된다**(쿠키가 함께 내려온다).
 
 **하는 일** — `school_id`를 **요청에서 받지 않는다.** 이메일 도메인으로 서버가 정한다.
 프론트가 드롭다운으로 도메인을 붙여줬더라도 **서버는 그 문자열을 다시 도메인으로 조회한다** —
@@ -372,7 +386,6 @@ export async function getMe() { ... }                   // → Me | null (401이
 ```python
 @router.post("/auth/login")
 def login(body: LoginIn, response: Response) -> Me:
-    user = db.authenticate_user(body.email, body.password)   # None이면 401
     response.set_cookie(...)                                  # user_id·school_id·role을 세션에
 
 @router.post("/auth/logout", status_code=204)
@@ -401,13 +414,9 @@ export async function deleteAccount(password) { ... }                         //
 ```python
 @router.patch("/auth/password", status_code=204)
 def change_password(body: ChangePasswordIn, user = Depends(current_user)) -> None:
-    db.verify_password(user.id, body.current_password)   # 틀리면 401 WRONG_PASSWORD
-    db.change_password(user.id, body.new_password)
 
 @router.delete("/auth/me", status_code=204)
 def delete_account(body: DeleteAccountIn, user = Depends(current_user)) -> None:
-    db.verify_password(user.id, body.password)
-    db.delete_user(user.id)        # users DELETE → complaints.submitted_by_user_id = NULL
 ```
 
 **탈퇴도 철회와 같은 세 단계를 탄다** — 경고 + 비밀번호(`verifyPassword`) → 최종 확인 → 실행.
@@ -430,8 +439,6 @@ export async function verifyPassword(password) { ... }   // → void (틀리면 
 ```python
 @router.post("/auth/verify-password", status_code=204)
 def verify_password(body: VerifyIn, user = Depends(current_user)) -> None:
-    if not db.verify_password(user.id, body.password):
-        raise Unauthorized("WRONG_PASSWORD")
 ```
 
 **왜 따로 있나** — 철회·탈퇴는 **본인 확인 → 최종 확인 → 실행** 세 단계다.
@@ -460,7 +467,6 @@ export async function startDraft() { ... }   // → { draft_key }
 @router.post("/drafts", status_code=201)
 def create_draft(user = Depends(current_user)) -> DraftOut:
     key = str(uuid4())
-    redis.setex(f"draft:{key}:owner", DRAFT_TTL, user.id)   # 소유권 등록
     return DraftOut(draft_key=key)                          # PostgreSQL에는 아직 안 쓴다
 ```
 
@@ -487,16 +493,11 @@ export async function sendMessage(draftKey, message) { ... }   // → RefineResu
 def send_message(draft_key: str, body: SendMessageIn,
                  user = Depends(current_user)) -> RefineResultOut:
     require_draft_owner(draft_key, user.id)      # Redis 대조, 어긋나면 403
-    return service.send_message(draft_key, body.message)
 
-# app/services/complaint_service.py
 def send_message(self, draft_key: str, student_message: str) -> dict:
-    self.db.add_conversation_turn(draft_key, 'student', student_message)   # ① 학생 발화 저장
-    conversation = self.db.get_conversation(draft_key)                     # ② 왕복 전체 로드
     result = self.bedrock.refine_complaint(conversation)                   # ③ 도구 호출
     ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
                   else result["follow_up_question"])
-    self.db.add_conversation_turn(draft_key, 'assistant', ai_message)      # ④ AI 발화 저장
     return result
 ```
 
@@ -505,10 +506,8 @@ def send_message(self, draft_key: str, student_message: str) -> dict:
 | `draft_key` | `str` (경로) | `startDraft`가 준 키 |
 | `message` | `str` (본문) | 학생이 친 구어체 문장 |
 
-**건드리는 것** — `complaint_conversations` INSERT **2행**(학생·AI). Bedrock 호출 1회.
-호출 결과를 `bedrock_logs`에 1행 남긴다(#23).
-확정안이 나온 턴이면 그 AI 행의 `refined_json`에 JSON을 함께 저장한다 — 접수 때 여기서 꺼낸다.
-**`complaints`는 건드리지 않는다** — 아직 접수 전이다.
+**효과** — 학생 발화와 AI 응답이 대화 기록에 남는다. **민원이 만들어지지는 않는다** —
+접수는 #11에서만 일어난다. 확정안은 서버가 보관하고, 접수 때 그것을 쓴다.
 
 **하는 일** — Bedrock이 도구(`classify_and_refine_complaint`)를 호출할 만큼 정보가 모였는지
 스스로 판단한다. 부족하면 도구를 안 부르고 일반 텍스트로 되묻는다.
@@ -534,12 +533,8 @@ def send_message(self, draft_key: str, student_message: str) -> dict:
 대화 순서가 꼬인다. Redis에 진행 표시를 세워 막는다.
 
 ```python
-if not redis.set(f"draft:{draft_key}:running", "1", nx=True, ex=TURN_TTL):
-    raise Conflict("TURN_IN_PROGRESS", 409)
 try:
-    return service.send_message(draft_key, body.message)
 finally:
-    redis.delete(f"draft:{draft_key}:running")   # 실패로 끝나도 반드시 지운다
 ```
 
 `nx=True`가 핵심이다 — 워커가 여럿이라 "있는지 보고 세우기"로 하면 두 워커가 동시에 통과한다.
@@ -564,7 +559,6 @@ export async function getDraftConversation(draftKey) { ... }   // → Conversati
 @router.get("/drafts/{draft_key}/conversation")
 def get_draft_conversation(draft_key: str, user = Depends(current_user)) -> list[TurnOut]:
     require_draft_owner(draft_key, user.id)    # 읽기도 소유권을 본다
-    return db.get_conversation(draft_key)      # WHERE draft_key=? ORDER BY created_at
 ```
 
 **프론트는 대화 배열을 자기 상태에만 들고 있지 않는다.** 화면을 다시 그릴 때 이걸 읽는다.
@@ -581,52 +575,13 @@ export async function submitDraft(draftKey) { ... }   // → { complaint_id, nex
 @router.post("/drafts/{draft_key}/submit", status_code=201)
 def submit_draft(draft_key: str, user = Depends(current_user)) -> SubmitOut:
     require_draft_owner(draft_key, user.id)
-    refined = db.get_last_refined(draft_key)      # ★ 아래 설명 — 없으면 409
-    cid = service.submit(user.school_id, user.id, draft_key, refined)
-    redis.delete(f"draft:{draft_key}:owner")      # 닫힌 초안 정리
     next_key = str(uuid4())
-    redis.setex(f"draft:{next_key}:owner", DRAFT_TTL, user.id)
     return SubmitOut(complaint_id=cid, next_draft_key=next_key)
 
-# db.get_last_refined
-#   SELECT refined_json FROM complaint_conversations
-#   WHERE draft_key=? AND refined_json IS NOT NULL
-#   ORDER BY created_at DESC LIMIT 1
-
-# service.submit → db.create_complaint
-#   ① complaints INSERT (status='미확인', confirmed_at=NULL)
-#   ② complaint_conversations UPDATE — 그 draft_key의 모든 행에 complaint_id 채움
 ```
 
-> ### `refined_json`이 하는 일  *(정본 스키마에 반영됨)*
->
-> **`complaint_conversations.refined_json JSONB`**
->
-> 정본 스키마에서 AI 발화는 `content`에 `"[정리 완료] {제목}"` 문자열로만 남는다.
-> **`category`·`location`·`refined_body`가 어디에도 저장되지 않는다.**
-> 그래서 접수 시점에 서버가 확정안을 복원할 방법이 없다.
->
-> `is_complete=true`인 턴을 저장할 때 확정안 JSON을 이 컬럼에 함께 넣으면
-> 접수 시 마지막 것을 꺼내 쓸 수 있다. 되묻는 턴은 `NULL`이다.
->
-> 이 컬럼이 `is_complete` 여부 표시도 겸한다 —
-> `refined_json IS NOT NULL`인 턴이 하나도 없으면 아직 확정 전이므로 `409`.
->
-> `JSONB`라서 `refined_json->>'category'`로 필드를 직접 읽는다. 파싱 단계가 없다.
-
-| 파라미터 | 타입 | 설명 |
-|---|---|---|
-| `draft_key` | `str` (경로) | 본문은 비어 있다 |
-
-**접수 전에 확인창을 띄운다.** 미리보기에서 "정식 접수"를 누르면 곧바로 올라가지 않고
-**"이대로 접수하시겠습니까?"** 확인창이 뜬다.
-
-| 버튼 | 동작 |
-|---|---|
-| 확인 | `submitDraft()` 호출 → 실제로 접수 |
-| 취소 | 아무것도 부르지 않는다. 미리보기가 그대로 남아 계속 고칠 수 있다 |
-
-게시판에 공개되는 동작이라 한 번 더 묻는다.
+> **확정안은 서버가 보관한다.** 프론트가 들고 있다가 접수 때 되돌려보내지 않는다.
+> 보관 방식은 `backend-design.md` §7-1.3.
 
 **본문에 확정안을 싣지 않는 이유** — 프론트가 보낸 값을 그대로 저장하면 화면에서 값을 바꿔
 보낼 수 있다. **AI가 확정한 것과 접수된 것이 달라질 여지를 없앤다.**
@@ -655,23 +610,17 @@ export async function getComplaintConversation(id) { ... }         // → Conver
 @router.get("/complaints")
 def list_complaints(status: Status | None = None,
                     user = Depends(current_user)) -> list[ComplaintOut]:
-    rows = db.list_complaints(user.school_id, status)   # 철회 제외, 최신순
     for r in rows:
         r["is_mine"] = (r.pop("submitted_by_user_id") == user.id)      # 목록에서도 계산
-        r["comments"] = db.get_hold_reasons(r["id"])                   # 보류 사유만
     return rows
 
 @router.get("/complaints/{cid}")
 def get_complaint(cid: int, user = Depends(current_user)) -> ComplaintOut:
-    c = db.get_complaint(cid, user.school_id)           # None이면 404
-    c["comments"] = db.get_comments(cid)
     c["is_mine"] = (c.pop("submitted_by_user_id") == user.id)   # ★ 여기서 계산하고 원본은 버린다
     return c
 
 @router.get("/complaints/{cid}/conversation")
 def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[TurnOut]:
-    db.get_complaint(cid, user.school_id)               # 소유 학교 확인용, 없으면 404
-    return db.get_conversation_by_complaint(cid)
 ```
 
 | 파라미터 | 타입 | 설명 |
@@ -692,7 +641,7 @@ def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[T
 **학생이 상세를 열어도 상태가 안 바뀐다.** 확인 전환은 관리자 전용(#17)에서만 일어난다.
 
 **철회된 민원은 id로 직접 조회해도 404다.** 목록에서만 빼면 링크를 아는 사람에게는 계속 보인다.
-`db.get_complaint`이 `status <> '철회'`를 조건에 넣는다 — 목록·상세·원문·관리자 상세가 전부 같다.
+목록·상세·원문·관리자 상세가 전부 같다 — 철회된 것은 어느 경로로도 보이지 않는다.
 
 ---
 
@@ -704,9 +653,6 @@ export async function withdrawComplaint(id, password) { ... }   // → void
 ```python
 @router.post("/complaints/{cid}/withdraw", status_code=204)
 def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None:
-    service.withdraw(cid, user.id, body.password)
-    #   ① db.verify_password(user_id, password)   틀리면 401
-    #   ② complaints UPDATE status='철회' WHERE id=? AND submitted_by_user_id=?
     #      0행이면 403 NOT_OWNER
 ```
 
@@ -780,7 +726,6 @@ export async function getStats() { ... }   // → { total, by_status }
 ```python
 @router.get("/admin/stats")
 def get_stats(user = Depends(require_admin)) -> StatsOut:
-    return db.get_complaint_stats(user.school_id)   # GROUP BY status, 철회 제외
 ```
 
 ```json
@@ -802,10 +747,7 @@ export async function openComplaint(id) { ... }   // → Complaint
 ```python
 @router.post("/admin/complaints/{cid}/open")
 def open_complaint(cid: int, user = Depends(require_admin)) -> ComplaintOut:
-    service.open_detail(cid, user.school_id)
-    #   db.confirm_complaint → UPDATE complaints
     #     SET status='확인', confirmed_at=CURRENT_TIMESTAMP
-    #     WHERE id=? AND school_id=? AND status='미확인'      ← 이 조건이 멱등성을 만든다
     return get_complaint(cid, user)     # 갱신된 상세 + 코멘트
 ```
 
@@ -832,9 +774,6 @@ export async function rejectComplaint(id) { ... }          // 확인   → 거�
 ```python
 @router.post("/admin/complaints/{cid}/accept")
 def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut:
-    ok, msg = service.accept(cid, user.school_id)
-    #   UPDATE complaints SET status='처리중'
-    #   WHERE id=? AND school_id=? AND status='확인'     ← 0행이면 409
 
 @router.post("/admin/complaints/{cid}/resolve")     # ... AND status='처리중'
 @router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인'
@@ -842,17 +781,13 @@ def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut:
 @router.post("/admin/complaints/{cid}/hold")
 def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
     if not body.reason.strip():
-        raise Conflict("HOLD_REASON_REQUIRED", 422)
-    ok, msg = service.hold(cid, user.school_id, user.id, body.reason)
-    #   ① UPDATE complaints SET status='보류' WHERE ... AND status='확인'
-    #   ② complaint_comments INSERT (is_hold_reason=1)   ← 같은 트랜잭션
 ```
 
 | 함수 | 파라미터 | 전제 상태 | 결과 상태 | 추가로 건드리는 것 |
 |---|---|---|---|---|
 | `accept` | `id` | `확인` | `처리중` | — |
 | `resolve` | `id` | `처리중` | `해결완료` | — |
-| `hold` | `id`, `reason` | `확인` | `보류` | `complaint_comments` INSERT |
+| `hold` | `id`, `reason` | `확인` | `보류` | 사유가 코멘트로 함께 남는다 |
 | `reject` | `id` | `확인` | `거절` | — |
 
 **전부 `200 Complaint`(갱신된 상태)를 돌려준다.** 프론트는 응답으로 화면을 다시 그린다.
@@ -863,7 +798,8 @@ def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
 **둘 다 통과한다** — 각자 다른 워커에서 같은 값을 읽기 때문이다.
 `UPDATE`의 `WHERE`에 조건을 넣으면 DB가 직렬화해 하나만 1행을 바꾸고 나머지는 0행 → `409`.
 
-**`hold`는 상태 변경과 코멘트 INSERT가 한 트랜잭션이다.** 사유 없는 보류가 남지 않게.
+**보류는 상태와 사유가 함께 성립한다.** 하나만 반영되는 일이 없다 —
+사유 없는 보류도, 보류 아닌 사유도 남지 않는다.
 
 **오류** `409 INVALID_TRANSITION`(전제 상태 불일치) · `422 HOLD_REASON_REQUIRED`(사유 공백)
 
@@ -877,7 +813,6 @@ export async function getBedrockLogs(limit = 50) { ... }   // → BedrockLog[]
 ```python
 @router.get("/admin/bedrock-logs")
 def get_bedrock_logs(limit: int = 50, user = Depends(require_admin)) -> list[BedrockLogOut]:
-    return db.get_bedrock_logs(user.school_id, limit)
 ```
 
 ```ts
@@ -892,6 +827,15 @@ interface BedrockLog {
   error: string | null;
 }
 ```
+
+정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
+**대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
+
+> **저장 범위** — 호출 시각·모델 id·도구 호출 성사 여부·지연·토큰·오류.
+> **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
+> 익명성 관리 대상이 늘어난다. 심사에 필요한 것은 호출이 일어났다는 사실과 지연·토큰이다.
+>
+> 테이블 정의는 `.kiro` 스키마, 적재 시점은 `backend-design.md` §8.5.
 
 정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
 **대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
@@ -927,8 +871,6 @@ export async function addComment(id, content) { ... }   // → Comment
 ```python
 @router.post("/admin/complaints/{cid}/comments", status_code=201)
 def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> CommentOut:
-    db.get_complaint(cid, user.school_id)          # 학교 확인, 없으면 404
-    return db.add_comment(cid, user.id, body.content)   # is_hold_reason=0
 ```
 
 | 파라미터 | 타입 | 설명 |
