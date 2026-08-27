@@ -1029,6 +1029,35 @@ def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> Com
 **가입 성공 시 다시 로그인하지 않는다.** 서버가 `Set-Cookie`를 함께 내려주므로
 `login`을 부를 필요 없이 곧장 `getMe()` 이후 흐름으로 들어간다.
 
+### 학생 화면
+
+| 화면 | 요소 | 무엇을 부르나 |
+|---|---|---|
+| **사이드바** | 과거 대화 목록 | `listSessions()` (#8-1) |
+| | "새 대화" 버튼 | `startSession()` (#8) |
+| | 목록에서 하나 클릭 | `getSession(sid)` (#8-2) + `getSessionConversation(sid)` (#10) |
+| **대화** | 말풍선 | 위 `getSessionConversation` 결과 |
+| | 칩(선택지) | `getSession`의 `choices`. 누르면 `sendMessage`로 보낸다 |
+| | 입력창 전송 | `sendMessage(sid, text)` (#9) |
+| | 미리보기 카드 | `sendMessage` 응답의 `preview`, 또는 `getSession`의 `preview` |
+| | "정식 접수" → 확인창 → 확인 | `submitSession(sid)` (#11) |
+| **게시판** | 민원 카드 목록 | `listComplaints()` (#12) |
+| | 원문 보기 토글 | `getComplaintConversation(id)` (#14) |
+| | 철회 (내 글만) | `verifyPassword` (#7-1) → 확인창 → `withdrawComplaint` (#15) |
+
+### 관리자 화면
+
+| 화면 | 요소 | 무엇을 부르나 |
+|---|---|---|
+| **대시보드** | 통계 카드 | `getStats()` (#16) |
+| | 목록·필터 탭 | `listComplaints(status?)` (#12) |
+| | 행 클릭 | `openComplaint(id)` (#17) — **여는 순간 확인으로 바뀐다** |
+| **상세 모달** | 결정 버튼 | `accept`/`resolve`/`hold`/`reject` (#18~21) |
+| | 코멘트 | `addComment(id, text)` (#22) |
+| **심사용** | Bedrock 호출 로그 | `getBedrockLogs()` (#23) |
+
+**관리자는 대화 세션 API를 쓰지 않는다.** 민원을 넣는 것은 학생의 일이다(역할 경계 표 참조).
+
 ---
 
 ## 4-1. 앱이 시작하고 끝나는 흐름

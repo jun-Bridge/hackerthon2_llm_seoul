@@ -354,7 +354,7 @@ CREATE TABLE chat_sessions (
     is_manual_title BOOLEAN NOT NULL DEFAULT FALSE,
     context        TEXT,              -- ★ 세션 주제 (압축된 맥락)
     compacted_upto INTEGER,           -- ★ 메시지 id. 이 id 이하는 context에 녹아 있다
-    category       VARCHAR(32),
+    category       VARCHAR(32),       -- 화면 아이콘용 사본. 접수 후 정본은 complaints.category
     complaint_id   INTEGER,           -- 접수되면 연결. NULL이면 초안
     created_at     TIMESTAMPTZ DEFAULT NOW(),
     updated_at     TIMESTAMPTZ DEFAULT NOW(),
@@ -399,6 +399,10 @@ complaint_conversations
 
 **미접수 대화는 세션이 지워지면 고아가 된다** — 둘 다 `NULL`인 행이다.
 정리 작업이 주기적으로 지운다(§12).
+
+**`chat_sessions.category`는 사본이다.** 사이드바에 아이콘을 그리려고 두는 값이고,
+접수되면 **정본은 `complaints.category`**다. 관리자가 카테고리를 고칠 수 있게 되면
+둘이 갈라지므로, **접수 후에는 세션 쪽을 읽지 않는다.**
 
 `compacted_upto`가 **버퍼의 시작점**이다. 그 이후 메시지만 원문으로 싣는다.
 별도 버퍼 저장소가 필요 없다 — 대화는 어차피 전부 DB에 있으므로 **경계만 기억하면 된다.**
@@ -482,7 +486,35 @@ GET /chat-sessions/{sid}/conversation    대화 전체 (화면용 — 압축 전
 **화면에는 전체를 보여준다.** `context`·`compacted_upto`는 LLM 맥락을 줄이는 장치이지
 사용자에게 보일 것을 줄이는 장치가 아니다.
 
-### 7.7 빈 세션이 쌓이는 것
+### 7.7 접수 — 한 트랜잭션에 네 가지
+
+```
+POST /chat-sessions/{sid}/submit
+  │
+  ├ 소유 확인 · 이미 접수됐으면 409 SESSION_CLOSED
+  ├ 마지막 확정안 조회
+  │    SELECT refined_json FROM complaint_conversations
+  │    WHERE chat_session_id=? AND refined_json IS NOT NULL
+  │    ORDER BY id DESC LIMIT 1        없으면 409 DRAFT_NOT_COMPLETE
+  │
+  └ 트랜잭션
+       ① complaints INSERT (status='미확인', school_id·submitted_by_user_id는 세션에서)
+       ② complaint_conversations UPDATE — 그 세션의 모든 행에 complaint_id 채움
+       ③ chat_sessions UPDATE — complaint_id 채움 (읽기 전용이 된다)
+       ④ chat_sessions INSERT — 다음 세션 발급
+```
+
+**넷이 한 트랜잭션이다.** 중간에 끊기면 어느 조합이든 망가진다 —
+①만 되면 근거 대화 없는 민원이, ②만 되면 주인 없는 대화가, ③이 빠지면 접수된 세션에
+계속 쓸 수 있게 된다.
+
+**`school_id`와 작성자를 세션 행에서 가져온다.** 요청 본문에서 받지 않는다 —
+프론트가 다른 학교를 보내면 격리가 뚫린다.
+
+**④를 같은 트랜잭션에 넣는 이유**: 빈 세션은 §7.8이 정리하므로 새는 것이 없고,
+따로 만들면 실패했을 때 다음 세션 없이 화면이 멈춘다.
+
+### 7.8 빈 세션이 쌓이는 것
 
 `POST /chat-sessions`가 곧바로 행을 만들고, 접수할 때도 다음 세션을 미리 발급한다.
 사용자가 열어놓고 아무 말도 안 하면 **제목 없는 빈 세션이 목록에 쌓인다.**
@@ -496,7 +528,7 @@ GET /chat-sessions/{sid}/conversation    대화 전체 (화면용 — 압축 전
 **"새 대화"를 눌렀는데 이미 빈 세션이 있으면 그것을 재사용한다.**
 연타로 빈 세션이 여러 개 생기는 것을 막는다.
 
-### 7.8 접수·철회 이후의 세션
+### 7.9 접수·철회 이후의 세션
 
 | 사건 | 세션은 |
 |---|---|
@@ -510,7 +542,7 @@ GET /chat-sessions/{sid}/conversation    대화 전체 (화면용 — 압축 전
 목록에서는 **철회됨**으로 표시한다 — 사라지면 사용자가 자기가 뭘 냈었는지 모른다.
 게시판에서 사라지는 것과 별개다.
 
-### 7.9 세션 목록 — "과거 대화"
+### 7.10 세션 목록 — "과거 대화"
 
 ```
 GET /chat-sessions
@@ -988,7 +1020,9 @@ def refine(history: list[dict]) -> RefineResult:
 **압축 호출도 남긴다.** 심사에서 "호출이 몇 번 있었나"를 보는데 정제만 세면 실제보다 적다.
 `is_complete`는 정제 호출에만 의미가 있으므로 압축 건은 `false`로 둔다.
 
-**`school_id`는 요청 컨텍스트의 세션에서 가져온다.** 백그라운드 압축도 그 세션의 학교를 안다.
+**`school_id`는 `chat_sessions.school_id`에서 가져온다.** 압축은 요청이 끝난 뒤 도는
+백그라운드 작업이라 **로그인 세션이 이미 없을 수 있다.** 요청 컨텍스트에 기대면 안 된다.
+`chat_sessions`에 `school_id`를 복제해둔 이유 중 하나가 이것이다.
 
 **로그는 성공·실패 모두 남긴다.** 실패만 안 남기면 심사 때 "호출이 몇 번 있었나"가 어긋난다.
 **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
