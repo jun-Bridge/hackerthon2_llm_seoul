@@ -52,11 +52,11 @@ HTTP 경계로 옮긴 것이다. 기능 자체가 궁금하면 그쪽을 본다.
 **세션 실체가 Redis에 있어야 하는 이유**: 워커가 여럿이다. 프로세스 메모리에 두면 다음 요청이
 다른 워커로 갈 때 로그인이 풀린다. Redis에 있으면 어느 워커가 받든 같고, 새로고침해도 유지된다.
 
-**세션의 소유자는 서버가 확인한다.** 남의 세션 id를 알아도 열리지 않는다 —
+**대화 세션의 소유자도 서버가 확인한다.** 남의 세션 id를 알아도 열리지 않는다 —
 목록·대화·접수 전부 로그인한 사용자의 것인지 대조하고, 아니면 **404**다.
 (존재 여부를 흘리지 않으려고 403이 아니다.)
 
-**그 외에는 아무것도 캐시하지 않는다.** 민원 목록·통계·코멘트는 매번 PostgreSQL에서 다시 읽는다.
+**목록·통계·코멘트는 캐시하지 않는다.** 매번 서버에서 다시 읽는다 —
 다른 사용자가 계속 바꾸는 데이터라 캐시하면 누군가는 낡은 것을 본다.
 
 ```js
@@ -182,7 +182,15 @@ interface Comment {
 interface ConversationTurn {
   role: 'student' | 'assistant';
   content: string;
+  choices: string[] | null;   // assistant 발화에 칩이 붙어 있었으면
   created_at: string;
+}
+
+interface Preview {           // AI가 확정한 민원 초안
+  category: Category;
+  location: string;
+  refined_title: string;
+  refined_body: string;
 }
 ```
 
@@ -261,7 +269,7 @@ export async function listSchools() { ... }   // → School[]
 ```
 ```python
 @router.get("/schools")
-def list_schools() -> list[SchoolOut]:
+def list_schools() -> list[SchoolOut]: ...
 ```
 
 ```ts
@@ -303,13 +311,7 @@ export async function signup(email, password, adminCode = null) { ... }   // →
 ```
 ```python
 @router.post("/auth/signup", status_code=201)
-def signup(body: SignupIn, response: Response) -> SignupOut:
-    # 역할은 admin_code가 정한다 — 클라이언트가 "나 교직원"이라 주장할 방법이 없다
-    if not code:
-        role = "student"
-        role = "admin"
-    else:
-    response.set_cookie(...)                            # 가입 즉시 로그인
+def signup(body: SignupIn, response: Response) -> SignupOut: ...
 ```
 
 | 파라미터 | 타입 | 필수 | 설명 |
@@ -374,12 +376,9 @@ export async function getMe() { ... }                   // → Me | null (401이
 ```
 ```python
 @router.post("/auth/login")
-def login(body: LoginIn, response: Response) -> Me:
-    response.set_cookie(...)                                  # user_id·school_id·role을 세션에
-
+def login(body: LoginIn, response: Response) -> Me: ...
 @router.post("/auth/logout", status_code=204)
 def logout(response: Response) -> None: ...                   # Redis 세션 삭제 + 쿠키 만료
-
 @router.get("/auth/me")
 def get_me(user = Depends(current_user)) -> Me: ...           # 미로그인 401
 ```
@@ -402,18 +401,17 @@ export async function deleteAccount(password) { ... }                         //
 ```
 ```python
 @router.patch("/auth/password", status_code=204)
-def change_password(body: ChangePasswordIn, user = Depends(current_user)) -> None:
-
+def change_password(body: ChangePasswordIn, user = Depends(current_user)) -> None: ...
 @router.delete("/auth/me", status_code=204)
-def delete_account(body: DeleteAccountIn, user = Depends(current_user)) -> None:
+def delete_account(body: DeleteAccountIn, user = Depends(current_user)) -> None: ...
 ```
 
 **탈퇴도 철회와 같은 세 단계를 탄다** — 경고 + 비밀번호(`verifyPassword`) → 최종 확인 → 실행.
 되돌릴 수 없는 정도가 철회보다 크므로 경고 문구를 더 분명히 한다.
 
-**탈퇴가 건드리는 것** — `users` 행 삭제, `complaints.submitted_by_user_id`가 `NULL`로.
-**민원 자체는 남는다.** 학교의 공공 기록이고 게시판은 이미 익명이라 표시에 영향이 없다.
-`complaint_conversations`·`complaint_comments`는 민원에 딸려 있으므로 함께 남는다.
+**탈퇴하면** 계정과 **대화 세션 목록**이 사라진다.
+**민원은 남는다** — 학교의 공공 기록이고 게시판은 이미 익명이라 표시에 영향이 없다.
+접수된 민원의 근거 대화와 코멘트도 민원에 매달려 남는다.
 
 프론트는 탈퇴 확인 문구에 "작성한 민원은 익명으로 남습니다"를 적는다.
 
@@ -427,7 +425,7 @@ export async function verifyPassword(password) { ... }   // → void (틀리면 
 ```
 ```python
 @router.post("/auth/verify-password", status_code=204)
-def verify_password(body: VerifyIn, user = Depends(current_user)) -> None:
+def verify_password(body: VerifyIn, user = Depends(current_user)) -> None: ...
 ```
 
 **왜 따로 있나** — 철회·탈퇴는 **본인 확인 → 최종 확인 → 실행** 세 단계다.
@@ -454,7 +452,7 @@ export async function startSession() { ... }   // → { session_id }
 ```
 ```python
 @router.post("/chat-sessions", status_code=201)
-def create_session(user = Depends(current_user)) -> SessionOut:
+def create_session(user = Depends(current_user)) -> SessionOut: ...
 ```
 
 **"새 민원 작성"을 누를 때 한 번.** 세션 행이 만들어지고, 이후 대화가 여기 묶인다.
@@ -473,7 +471,7 @@ export async function listSessions() { ... }   // → SessionSummary[]
 ```
 ```python
 @router.get("/chat-sessions")
-def list_sessions(user = Depends(current_user)) -> list[SessionSummaryOut]:
+def list_sessions(user = Depends(current_user)) -> list[SessionSummaryOut]: ...
 ```
 
 ```ts
@@ -531,13 +529,6 @@ export async function sendMessage(sessionId, message) { ... }   // → RefineRes
 ```python
 @router.post("/chat-sessions/{sid}/messages")
 def send_message(sid: int, body: SendMessageIn,
-                 user = Depends(current_user)) -> RefineResultOut:
-    require_session_owner(sid, user.id)      # Redis 대조, 어긋나면 403
-
-    result = self.bedrock.refine_complaint(conversation)                   # ③ 도구 호출
-    ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
-                  else result["follow_up_question"])
-    return result
 ```
 
 | 파라미터 | 타입 | 설명 |
@@ -568,24 +559,18 @@ def send_message(sid: int, body: SendMessageIn,
 **미리보기가 뜬 뒤에도 같은 함수를 그대로 부른다.** "위치를 4층으로 바꿔줘"도 메시지다 —
 **수정 전용 API가 없다.** 대화가 곧 수정 수단이고, 새 결과가 이전 미리보기를 덮는다.
 
-**한 초안에서 턴은 하나만 돈다.** 응답이 오기 전에 또 보내면 Bedrock 호출이 둘 다 돌고
-대화 순서가 꼬인다. Redis에 진행 표시를 세워 막는다.
-
-```python
-try:
-finally:
-```
-
-`nx=True`가 핵심이다 — 워커가 여럿이라 "있는지 보고 세우기"로 하면 두 워커가 동시에 통과한다.
-`SET NX`는 Redis가 원자적으로 처리해 하나만 성공한다. `ex`를 주는 이유는 워커가 죽어도
-표시가 영원히 남지 않게 하기 위해서다.
+**한 세션에서 턴은 하나만 돈다.** 응답이 오기 전에 또 보내면 호출이 둘 다 돌고 대화 순서가 꼬인다.
+서버가 막고 `409 TURN_IN_PROGRESS`를 돌려준다. (막는 방법은 `backend-design.md` §7-1.3.)
 
 **프론트는 응답이 올 때까지 입력창을 잠근다.** 409를 받을 일이 없어야 정상이고,
 받았다면 이중 클릭이나 재시도가 겹친 것이다.
 
 **오류**
 `409 TURN_IN_PROGRESS` — 이전 턴이 아직 돌고 있다
-`502 BEDROCK_ERROR` — 학생 발화는 ①에서 이미 저장됐으므로 다시 보내면 이어진다
+`502 BEDROCK_ERROR` — 학생 발화는 이미 저장돼 있으므로 다시 보내면 이어진다
+`409 SESSION_CLOSED` — 이미 접수된 세션이다
+`409 CONVERSATION_STUCK` — 같은 단계를 여러 번 맴돌았다
+`400 VALIDATION_FAILED` — 빈 값이거나 2000자 초과
 
 ---
 
@@ -596,8 +581,7 @@ export async function getSessionConversation(sessionId) { ... }   // → Convers
 ```
 ```python
 @router.get("/chat-sessions/{sid}/conversation")
-def get_conversation(sid: int, user = Depends(current_user)) -> list[TurnOut]:
-    require_session_owner(sid, user.id)    # 읽기도 소유권을 본다
+def get_conversation(sid: int, user = Depends(current_user)) -> list[TurnOut]: ...
 ```
 
 **프론트는 대화 배열을 자기 상태에만 들고 있지 않는다.** 화면을 다시 그릴 때 이걸 읽는다.
@@ -612,11 +596,7 @@ export async function submitSession(sessionId) { ... }   // → { complaint_id, 
 ```
 ```python
 @router.post("/chat-sessions/{sid}/submit", status_code=201)
-def submit_session(sid: int, user = Depends(current_user)) -> SubmitOut:
-    require_session_owner(sid, user.id)
-    next_key = str(uuid4())
-    return SubmitOut(complaint_id=cid, next_session_id=next_key)
-
+def submit_session(sid: int, user = Depends(current_user)) -> SubmitOut: ...
 ```
 
 > **확정안은 서버가 보관한다.** 프론트가 들고 있다가 접수 때 되돌려보내지 않는다.
@@ -626,11 +606,16 @@ def submit_session(sid: int, user = Depends(current_user)) -> SubmitOut:
 보낼 수 있다. **AI가 확정한 것과 접수된 것이 달라질 여지를 없앤다.**
 서버가 그 세션의 마지막 확정안을 쓴다.
 
-**`next_session_id`를 함께 주는 이유** — 접수되면 그 세션은 닫힌다. 다음 민원이 앞 대화와
-섞이지 않도록 서버가 새 키를 바로 발급한다. 프론트는 받아서 교체만 하면 되고
-`startSession()`를 다시 부르지 않는다.
+**`next_session_id`를 함께 주는 이유** — 접수되면 그 세션은 **읽기 전용**이 된다.
+다음 민원이 앞 대화와 섞이지 않도록 서버가 새 세션을 바로 열어준다.
+프론트는 받아서 교체만 하면 되고 `startSession()`을 다시 부르지 않는다.
 
-**오류** `409 DRAFT_NOT_COMPLETE` — 아직 되묻는 중이라 확정안이 없다
+**접수 전에 확인창을 띄운다.** "정식 접수"를 누르면 곧바로 올라가지 않고
+**"이대로 접수하시겠습니까?"**가 뜬다. 확인해야 이 함수를 부르고, 취소하면 아무것도 부르지 않는다.
+
+**오류**
+`409 DRAFT_NOT_COMPLETE` — 아직 되묻는 중이라 확정안이 없다
+`409 SESSION_CLOSED` — 이미 접수된 세션이다
 
 ---
 
@@ -648,18 +633,10 @@ export async function getComplaintConversation(id) { ... }         // → Conver
 ```python
 @router.get("/complaints")
 def list_complaints(status: Status | None = None,
-                    user = Depends(current_user)) -> list[ComplaintOut]:
-    for r in rows:
-        r["is_mine"] = (r.pop("submitted_by_user_id") == user.id)      # 목록에서도 계산
-    return rows
-
 @router.get("/complaints/{cid}")
-def get_complaint(cid: int, user = Depends(current_user)) -> ComplaintOut:
-    c["is_mine"] = (c.pop("submitted_by_user_id") == user.id)   # ★ 여기서 계산하고 원본은 버린다
-    return c
-
+def get_complaint(cid: int, user = Depends(current_user)) -> ComplaintOut: ...
 @router.get("/complaints/{cid}/conversation")
-def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[TurnOut]:
+def get_complaint_conversation(cid: int, user = Depends(current_user)) -> list[TurnOut]: ...
 ```
 
 | 파라미터 | 타입 | 설명 |
@@ -691,8 +668,7 @@ export async function withdrawComplaint(id, password) { ... }   // → void
 ```
 ```python
 @router.post("/complaints/{cid}/withdraw", status_code=204)
-def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None:
-    #      0행이면 403 NOT_OWNER
+def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)) -> None: ...
 ```
 
 | 파라미터 | 타입 | 설명 |
@@ -764,7 +740,7 @@ export async function getStats() { ... }   // → { total, by_status }
 ```
 ```python
 @router.get("/admin/stats")
-def get_stats(user = Depends(require_admin)) -> StatsOut:
+def get_stats(user = Depends(require_admin)) -> StatsOut: ...
 ```
 
 ```json
@@ -785,9 +761,7 @@ export async function openComplaint(id) { ... }   // → Complaint
 ```
 ```python
 @router.post("/admin/complaints/{cid}/open")
-def open_complaint(cid: int, user = Depends(require_admin)) -> ComplaintOut:
-    #     SET status='확인', confirmed_at=CURRENT_TIMESTAMP
-    return get_complaint(cid, user)     # 갱신된 상세 + 코멘트
+def open_complaint(cid: int, user = Depends(require_admin)) -> ComplaintOut: ...
 ```
 
 **건드리는 것** — `complaints` UPDATE(조건부) · `complaint_comments` 조회
@@ -812,14 +786,11 @@ export async function rejectComplaint(id) { ... }          // 확인   → 거�
 ```
 ```python
 @router.post("/admin/complaints/{cid}/accept")
-def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut:
-
+def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut: ...
 @router.post("/admin/complaints/{cid}/resolve")     # ... AND status='처리중'
 @router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인'
-
 @router.post("/admin/complaints/{cid}/hold")
-def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
-    if not body.reason.strip():
+def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut: ...
 ```
 
 | 함수 | 파라미터 | 전제 상태 | 결과 상태 | 추가로 건드리는 것 |
@@ -844,6 +815,34 @@ def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
 
 ---
 
+#### 22. `addComment` — 코멘트 추가
+
+```js
+export async function addComment(id, content) { ... }   // → Comment
+```
+```python
+@router.post("/admin/complaints/{cid}/comments", status_code=201)
+def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> CommentOut: ...
+```
+```python
+@router.post("/admin/complaints/{cid}/comments", status_code=201)
+def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> CommentOut: ...
+```
+
+| 파라미터 | 타입 | 설명 |
+|---|---|---|
+| `id` | `int` (경로) | |
+| `content` | `str` (본문) | 빈 문자열이면 400 |
+
+**상태와 무관하게 언제든 된다.** 보류로 전환할 때만 사유가 필수일 뿐,
+코멘트 자체는 상시 추가되고 **누적**된다. 덮어쓰기가 아니다.
+
+**작성자는 응답에 넣지 않는다.** `author_user_id`는 DB에만 있고 화면에는 "관리자"로만 나온다.
+
+`is_hold_reason`으로 보류 사유와 일반 코멘트를 구분한다 — 프론트가 보류 사유를 강조 표시할 때 쓴다.
+
+---
+
 #### 23. `getBedrockLogs` — 호출 로그 (대회 심사용)
 
 ```js
@@ -851,7 +850,7 @@ export async function getBedrockLogs(limit = 50) { ... }   // → BedrockLog[]
 ```
 ```python
 @router.get("/admin/bedrock-logs")
-def get_bedrock_logs(limit: int = 50, user = Depends(require_admin)) -> list[BedrockLogOut]:
+def get_bedrock_logs(limit: int = 50, user = Depends(require_admin)) -> list[BedrockLogOut]: ...
 ```
 
 ```ts
@@ -867,52 +866,21 @@ interface BedrockLog {
 }
 ```
 
-정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
-**대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
 
-> **저장 범위** — 호출 시각·모델 id·도구 호출 성사 여부·지연·토큰·오류.
-> **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
-> 익명성 관리 대상이 늘어난다. 심사에 필요한 것은 호출이 일어났다는 사실과 지연·토큰이다.
->
-> 테이블 정의는 `.kiro` 스키마, 적재 시점은 `backend-design.md` §8.5.
-
-정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
-**대회 심사 기준에 들어 있는데 계약서 초안에 빠져 있었다.**
-
-> **저장 범위** — 호출 시각 · 모델 id · 도구 호출 성사 여부 · 지연 · 토큰 · 오류.
-> **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
-> 익명성 관리 대상이 늘어난다.
->
-> 테이블 정의는 `.kiro` 스키마, 적재 시점은 `backend-design.md` §8.5.
 >
 > `BedrockClient.refine_complaint()`가 호출할 때마다 1행씩 남긴다.
 > **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 로그에 중복 보관되면
 > 익명성 관리 대상이 두 곳으로 늘어난다. 심사에 필요한 것은 "호출이 실제로 일어났다"는
 > 사실과 지연·토큰이지 내용이 아니다.
 
----
+정본 **US-5.1**("심사위원으로서 Bedrock 호출 로그를 확인하고 싶다")을 위한 것이다.
 
-#### 22. `addComment` — 코멘트 추가
-
-```js
-export async function addComment(id, content) { ... }   // → Comment
-```
-```python
-@router.post("/admin/complaints/{cid}/comments", status_code=201)
-def add_comment(cid: int, body: CommentIn, user = Depends(require_admin)) -> CommentOut:
-```
-
-| 파라미터 | 타입 | 설명 |
-|---|---|---|
-| `id` | `int` (경로) | |
-| `content` | `str` (본문) | 빈 문자열이면 400 |
-
-**상태와 무관하게 언제든 된다.** 보류로 전환할 때만 사유가 필수일 뿐,
-코멘트 자체는 상시 추가되고 **누적**된다. 덮어쓰기가 아니다.
-
-**작성자는 응답에 넣지 않는다.** `author_user_id`는 DB에만 있고 화면에는 "관리자"로만 나온다.
-
-`is_hold_reason`으로 보류 사유와 일반 코멘트를 구분한다 — 프론트가 보류 사유를 강조 표시할 때 쓴다.
+> **저장 범위** — 호출 시각 · 모델 id · 도구 호출 성사 여부 · 지연 · 토큰 · 오류.
+> **프롬프트와 응답 본문은 저장하지 않는다** — 민원 내용이 두 곳에 중복 보관되면
+> 익명성 관리 대상이 늘어난다.
+>
+> 정제 호출과 압축 호출이 모두 남는다(압축 건의 `is_complete`는 항상 `false`).
+> 테이블 정의는 `.kiro` 스키마, 적재 시점은 `backend-design.md` §8.5.
 
 ---
 
@@ -1184,11 +1152,6 @@ app/session/        Redis 세션 · 초안 소유권
 app/llm/            BedrockClient — 도구 호출로 분류·정제
 ```
 
-```python
-# app/main.py — 프론트를 같은 서버가 서빙한다
-app.include_router(api_router, prefix="/api")
-app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
-```
 
 **API 라우터를 정적 파일보다 먼저 등록한다.** 순서가 바뀌면 `/api/...`가 정적 핸들러에 먹힌다.
 
