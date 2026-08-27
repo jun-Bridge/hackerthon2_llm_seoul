@@ -25,3 +25,9 @@ build/
 # data
 *.sqlite
 *.db
+
+# 키·시크릿 (EC2 팀 키, Streamlit secrets)
+*.pem
+*.key
+.streamlit/secrets.toml
+.aws/

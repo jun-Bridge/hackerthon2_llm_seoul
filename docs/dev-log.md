@@ -187,3 +187,20 @@ M4 통합 기준도 "흐름 4·6·7"에서 "1~10 전부"로 넓혔다. 셋만 �
   예약어(`app_user`·`line_order`), 턴 시작 조건 두 가지, `origin`의 적용 범위,
   정리 작업의 존재는 여러 장에 걸쳐 나오므로 서술을 한 번에 맞췄다.
 - `requirements.md` 684줄 / `proposal.md` 337줄.
+
+
+## [2026-08-27] Kiro spec 생성 + 대회 요구사항 통합
+- **상황 재정의**: 기존 독립 설계 + AWS Bedrock 해커톤 요구사항을 동시 충족해야 함
+- **이중 트랙 전략 채택**:
+  - Track A (Streamlit + Bedrock): 대회 제출용, 빠른 프로토타입
+  - Track B (FastAPI + React): 확장 구조, 기존 설계 유지
+- **핵심 설계 원칙은 유지**: 두 코어 분리, 제안/승인, LLM 소유 금지
+- **LLM 교체**: gpt-oss-120b → AWS Bedrock Claude 3 (도구 호출 지원 확인 필요)
+- **Kiro spec 생성**: `.kiro/specs/complaint-assistant/`
+  - `requirements.md`: User Stories + Acceptance Criteria (M0~M6)
+  - `design.md`: 이중 트랙 아키텍처, 컴포넌트 설계, 배포 가이드
+  - `tasks.md`: 38개 구체적 태스크, 의존성 명시
+- **대회 파일 구조 반영**: `app.py`, `bedrock_*.py`, `TEAM_GUIDE.html`, 팀 키
+- **Track A 우선 구현 결정**: M0~M4를 Streamlit으로 완성 → Track B는 대회 후
+- **새 블로커 없음**: Bedrock 도구 호출은 M0-TASK-001에서 실측 예정
+
