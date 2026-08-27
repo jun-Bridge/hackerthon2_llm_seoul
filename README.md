@@ -37,6 +37,7 @@
     │   │   │       ├── client.py
     │   │   │       ├── session_store.py
     │   │   │       └── stream_buffer.py
+    │   │   ├── orchestrator/ 턴 실행기 — 두 코어를 아는 유일한 곳
     │   │   ├── llm/         LLM 클라이언트 추상화 (base + gpt-oss 구현)
     │   │   │   └── prompts/    프롬프트 템플릿 (코드에서 분리)
     │   │   ├── schemas/     Pydantic 요청·응답 계약
