@@ -57,7 +57,7 @@ schools (학교)
   └──< complaints (N)               [school_id FK, CASCADE]
          │ 1                         (모든 조회는 이 school_id로 스코프)
          ├──< complaint_conversations (N)  [complaint_id FK, CASCADE]
-         │      (접수 전에는 complaint_id NULL, draft_key로만 묶여 있음)
+         │      (접수 전에는 complaint_id NULL, chat_session_id로만 묶여 있음)
          └──< complaint_comments (N)       [complaint_id FK, CASCADE]
                 (author_user_id도 FK, ON DELETE SET NULL)
 ```
@@ -118,7 +118,7 @@ CREATE TABLE complaints (
 CREATE TABLE complaint_conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     complaint_id INTEGER,
-    draft_key TEXT NOT NULL,
+    chat_session_id INTEGER,           -- 접수 전 조회는 이걸로
     role TEXT NOT NULL CHECK(role IN ('student', 'assistant')),
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -199,28 +199,21 @@ DB(영속)와 휘발성 상태의 경계를 구현 전에 못박는다. 로그�
 | 키 | 내용 | 갱신 지점 |
 |---|---|---|
 | `logged_in`, `user_id`, `school_id`, `role` | 인증 결과 | 로그인/로그아웃 |
-| `draft_key` | 접수 전 대화 임시 식별자 | 새 작성 시작, 접수 완료 후 재발급 |
-| `preview_result` | AI 확정안 (미리보기) | `is_complete=True` 수신 시 |
-| `selected_complaint_id` | 관리자가 연 상세 화면의 민원 ID | 목록 클릭 / 상세 닫기 |
-| `hold_modal_open`, `hold_comment_draft` | 보류 코멘트 모달의 임시 입력값 | 보류 버튼 클릭 / 제출·취소 |
-| `withdraw_target_id` | 철회 확인 폼이 열린 민원 ID | 철회 버튼 클릭 / 확인·취소 |
-
-### 절대 세션에 두지 않고 매번 DB에서 다시 읽는 것
-
-- **대화 전체** (`db.get_conversation(draft_key)` / `get_conversation_by_complaint(id)`) — 세션에는 `draft_key`/`complaint_id`만
-- **민원 목록·통계·코멘트 목록** — 렌더링마다 재조회. 다른 사용자의 변경(다른 관리자가 방금 상태를 바꿈 등)을 반영하려면 캐시하면 안 됨
-- **민원 상태 자체** — 어디에도 "현재 보고 있는 민원의 상태"를 복제해 들고 있지 않는다. 화면에 그릴 때마다 DB 값을 그대로 쓴다
-
-### `미확인 → 확인` 자동전환과 세션의 관계
-
-이 전환은 **세션이 아니라 DB 사이드 이펙트**로 구현한다. 관리자가 목록에서 민원을 클릭해 `selected_complaint_id`를 세션에 세팅하는 시점에, 같은 요청 안에서 `ComplaintService.open_detail(complaint_id, school_id)`를 호출해 DB의 `status`를 즉시 갱신한다. 세션 값(`selected_complaint_id`)은 "지금 어떤 화면을 보고 있나"만 기억하고, "그래서 상태가 바뀌었다"는 사실은 DB에만 있다 — 탭을 새로고침해도 확인 처리가 풀리지 않아야 하기 때문이다.
-
-### draft_key 수명
-
-- 학생이 새 민원 작성을 시작할 때만 `uuid4()`로 발급
-- 같은 draft로 여러 왕복이 누적됨 (되묻기 전체가 하나의 draft)
-- 접수 완료 시 해당 draft의 모든 대화 행이 `complaint_id`로 연결되고, 세션의 `draft_key`는 새 uuid로 교체 (다음 민원과 섞임 방지)
-- 탭을 닫으면 미접수 draft는 유실 허용 (Out of Scope)
+> **대화 세션 컨테이너는 `requirements.md`와 `docs/backend-design.md` §7이 정본이다.**
+>
+> 요약하면 세 겹이다 — **현재 대화(버퍼)** → 차면 **과거 대화**로 밀리고 → 쌓이면
+> **이전 세션주제와 함께** 압축해 새 **세션주제**를 만든다. 압축이 누적되므로
+> 대화가 길어져도 초반 맥락이 사라지지 않는다.
+>
+> | 무엇 | 어디 |
+> |---|---|
+> | 대화 전체(화면용) | PostgreSQL `complaint_conversations` |
+> | 세션주제·제목·압축 경계 | PostgreSQL `chat_sessions` |
+> | 로그인 세션 | Redis `sess:{login_sid}` |
+> | 턴 잠금·압축 잠금·단계 캐시 | Redis `turn:{sid}:running` · `compact:{sid}` · `sess_state:{sid}` |
+>
+> **소유자는 `chat_sessions.user_id`가 쥔다.** Redis에 두지 않는다 —
+> 세션이 "과거 대화" 목록에 남아야 하므로 어차피 영속 행이다.
 
 ---
 
@@ -289,17 +282,20 @@ class DatabaseManager:
         self.conn.commit()
 
     # --- 대화 ---
-    def add_conversation_turn(self, draft_key: str, role: str, content: str, complaint_id: int | None = None):
+    def add_conversation_turn(self, session_id: int, role: str, content: str,
+                              choices: list | None = None, refined_json: dict | None = None):
         self.conn.execute(
-            "INSERT INTO complaint_conversations (complaint_id, draft_key, role, content) VALUES (?, ?, ?, ?)",
-            (complaint_id, draft_key, role, content)
+            "INSERT INTO complaint_conversations "
+            "(chat_session_id, role, content, choices, refined_json) VALUES (%s,%s,%s,%s,%s)",
+            (session_id, role, content, choices, refined_json)
         )
         self.conn.commit()
 
-    def get_conversation(self, draft_key: str) -> list[dict]:
+    def get_conversation(self, session_id: int) -> list[dict]:
         cursor = self.conn.execute(
-            "SELECT role, content FROM complaint_conversations WHERE draft_key = ? ORDER BY created_at",
-            (draft_key,)
+            "SELECT role, content, choices FROM complaint_conversations "
+            "WHERE chat_session_id = %s ORDER BY id",
+            (session_id,)
         )
         return [{"role": r[0], "content": r[1]} for r in cursor.fetchall()]
 
@@ -311,7 +307,7 @@ class DatabaseManager:
         return [{"role": r[0], "content": r[1]} for r in cursor.fetchall()]
 
     # --- 민원 생성/조회 (school_id로 항상 스코프) ---
-    def create_complaint(self, school_id: int, user_id: int, draft_key: str,
+    def create_complaint(self, school_id: int, user_id: int, session_id: int,
                           category: str, location: str, title: str, body: str) -> int:
         """상태는 항상 '미확인'으로 시작 (DEFAULT)."""
         cursor = self.conn.execute(
@@ -322,8 +318,8 @@ class DatabaseManager:
         )
         complaint_id = cursor.lastrowid
         self.conn.execute(
-            "UPDATE complaint_conversations SET complaint_id = ? WHERE draft_key = ?",
-            (complaint_id, draft_key)
+            "UPDATE complaint_conversations SET complaint_id = %s WHERE chat_session_id = %s",
+            (complaint_id, session_id)
         )
         self.conn.commit()
         return complaint_id
@@ -535,19 +531,22 @@ class ComplaintService:
         self.db = db
         self.bedrock = bedrock
 
-    def send_message(self, draft_key: str, student_message: str) -> dict:
-        self.db.add_conversation_turn(draft_key, role='student', content=student_message)
-        conversation = self.db.get_conversation(draft_key)
+    def send_message(self, session_id: int, student_message: str) -> dict:
+        self.db.add_conversation_turn(session_id, role='student', content=student_message)
+        context, buffer = self.db.load_context(session_id)   # 세션주제 + 압축 경계 이후 원문
         result = self.bedrock.refine_complaint(conversation)
 
         ai_message = (f"[정리 완료] {result['refined_title']}" if result.get("is_complete")
                        else result.get("question", "추가 정보를 알려주세요."))
-        self.db.add_conversation_turn(draft_key, role='assistant', content=ai_message)
+        self.db.add_conversation_turn(session_id, role='assistant', content=ai_message,
+                                      choices=result.get('choices'),
+                                      refined_json=result if result.get('is_complete') else None)
         return result
 
-    def submit(self, school_id: int, user_id: int, draft_key: str, refined: dict) -> int:
+    def submit(self, school_id: int, user_id: int, session_id: int) -> int:
+        # 확정안은 서버가 보관한 마지막 refined_json에서 꺼낸다 (프론트가 보내지 않는다)
         return self.db.create_complaint(
-            school_id=school_id, user_id=user_id, draft_key=draft_key,
+            school_id=school_id, user_id=user_id, session_id=session_id,
             category=refined["category"], location=refined["location"],
             title=refined["refined_title"], body=refined["refined_body"],
         )
@@ -690,7 +689,7 @@ elif user.role == "admin":
 └───────────────────────────┴───────────────────────────────┘
 ```
 
-**흐름**: 이전 버전과 동일 (draft_key 발급 → 대화 → 미리보기 → 접수 → 철회). 게시판 카드에는 이제 `db.get_comments(complaint_id)`를 함께 조회해 코멘트(특히 `is_hold_reason=True`인 보류 사유)를 표시한다.
+**흐름**: 세션 생성 → 대화(되묻기·칩) → 미리보기 → 확인창 → 접수 → 철회(3단계). 게시판 카드에는 이제 `db.get_comments(complaint_id)`를 함께 조회해 코멘트(특히 `is_hold_reason=True`인 보류 사유)를 표시한다.
 
 ### 관리자 화면 (pages/admin_view.py)
 
@@ -793,7 +792,7 @@ elif user.role == "admin":
 ### Bedrock 호출 오류
 ```python
 try:
-    result = complaint_service.send_message(draft_key, text)
+    result = complaint_service.send_message(session_id, text)
 except BedrockRefineError:
     st.error("AI 응답 처리에 실패했습니다. 다시 시도해주세요.")
 except botocore.exceptions.ClientError as e:
