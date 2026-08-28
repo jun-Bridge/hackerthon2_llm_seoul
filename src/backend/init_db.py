@@ -13,7 +13,7 @@ legacy(tmp/legacy/app/db/models.py)는 draft_key 방식이라 chat_sessions·adm
 DB URL은 core/config.py의 Settings.database_url 에서 읽는다 (환경변수 DATABASE_URL 또는 .env).
 """
 from app.core.config import get_settings
-from app.repo.pool import get_pool
+from app.repo.pool import close_pool, get_pool
 
 DDL = r"""
 CREATE TABLE IF NOT EXISTS schools (
@@ -132,5 +132,10 @@ if __name__ == "__main__":
     settings = get_settings()
     # 비밀번호가 URL에 있을 수 있으므로 전체 URL은 출력하지 않는다.
     print("스키마를 생성/확인합니다 (idempotent)...")
-    init_db()
-    print("완료: 8개 테이블 + 인덱스가 준비되었습니다.")
+    try:
+        init_db()
+        print("완료: 8개 테이블 + 인덱스가 준비되었습니다.")
+    finally:
+        # 인터프리터 종료 전에 풀의 백그라운드 스레드를 정리한다
+        # (Python 3.14는 종료 시점 스레드 join을 엄격히 막아 경고를 낸다).
+        close_pool()

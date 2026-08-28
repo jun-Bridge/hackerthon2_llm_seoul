@@ -12,7 +12,7 @@ email_domain UNIQUE 제약에 ON CONFLICT를 걸어 중복 삽입을 막는다.
 """
 import re
 
-from app.repo.pool import get_pool
+from app.repo.pool import close_pool, get_pool
 
 # (학교명, 이메일 도메인, 별칭 리스트, [관리자 코드, ...])
 # 도메인은 각 대학 공식 사이트로 검증한 정본이다. 학교를 정하는 유일한 근거이므로
@@ -135,5 +135,10 @@ def seed() -> None:
 
 if __name__ == "__main__":
     print("학교 시드를 삽입/갱신합니다 (idempotent)...")
-    seed()
-    print("완료.")
+    try:
+        seed()
+        print("완료.")
+    finally:
+        # 인터프리터 종료 전에 풀의 백그라운드 스레드를 정리한다
+        # (Python 3.14는 종료 시점 스레드 join을 엄격히 막아 경고를 낸다).
+        close_pool()
