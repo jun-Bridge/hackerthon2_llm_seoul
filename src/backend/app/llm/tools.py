@@ -15,14 +15,21 @@ ASK_FOLLOWUP = {
         "type": "object",
         "properties": {
             "missing": {"type": "string", "enum": ["category", "location", "detail"]},
-            "question": {"type": "string", "description": "학생에게 물을 한 문장"},
+            "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": "학생에게 물을 한 문장",
+            },
             "choices": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 3,
+                "maxItems": 5,
                 "description": "고르기 쉬운 선택지 3~5개",
             },
         },
         "required": ["missing", "question", "choices"],
+        "additionalProperties": False,
     },
 }
 
@@ -33,11 +40,28 @@ CLASSIFY_AND_REFINE = {
         "type": "object",
         "properties": {
             "category": {"type": "string", "enum": CATEGORIES},  # enum으로 고정
-            "location": {"type": "string", "description": "건물명/층/호실"},
-            "refined_title": {"type": "string", "description": "공문서 제목, 30자 내외"},
-            "refined_body": {"type": "string", "description": "현상/영향/요청 3단 구조"},
-            "session_title": {"type": "string", "description": "사이드바용 짧은 제목"},
+            "location": {
+                "type": "string",
+                "minLength": 1,
+                "description": "건물명/층/호실",
+            },
+            "refined_title": {
+                "type": "string",
+                "minLength": 1,
+                "description": "공문서 제목, 30자 내외",
+            },
+            "refined_body": {
+                "type": "string",
+                "minLength": 1,
+                "description": "현상/영향/요청 3단 구조",
+            },
+            "session_title": {
+                "type": "string",
+                "minLength": 1,
+                "description": "사이드바용 짧은 제목",
+            },
         },
         "required": ["category", "location", "refined_title", "refined_body", "session_title"],
+        "additionalProperties": False,
     },
 }
