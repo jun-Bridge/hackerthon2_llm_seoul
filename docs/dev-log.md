@@ -911,3 +911,17 @@ FastAPI+React 캔버스 편집 서비스의 잔재라 UniVoice 계층 구조와 
 
 **갱신**: `src/backend/README.md`(v1 캔버스 → UniVoice 계층), `src/frontend/src/api/README.md`,
 `KIRO_SPEC.md`(문서 지도에 스캐폴드 위치 추가).
+
+## [2026-08-28] 상태 전이 규칙 확장 · 관리자 UX 차단 · Bedrock 502 수정 · 문서 실배포 반영
+- **상태 전이 규칙 변경(사용자 지시)**: `보류 → 해결완료` 전이 허용, `거절`도 사유 필수화.
+  - `complaint_repo.resolve`: `WHERE status IN ('처리중','보류')`로 확장 (전에는 '처리중'만).
+  - `complaint_service.reject`: 시그니처에 `reason` 추가, 사유 필수 + 코멘트 저장을 한 트랜잭션으로(사유 없는 거절 방지). `admin.py`의 reject는 `body: HoldIn`으로 reason 수신.
+  - 프론트 `admin.js rejectComplaint(id, reason)`, `ComplaintDetailModal`: 거절 사유 prompt, 해결완료 버튼을 `처리중`뿐 아니라 `보류`에도 노출.
+  - 정본(`.kiro/.../requirements.md`) Status Workflow, `api-contract.md`(#18~21 표·상태 다이어그램·오류 코드), `backend-design.md` §4 전이표 동기화.
+  - 단위 40개 통과 + 실서버 E2E(보류 빈 사유 422 → 사유 보류 → 보류→해결완료 200) 확인.
+- **관리자 채팅 진입 차단(버그 수정)**: 관리자로 로그인해도 홈 FAB/카테고리로 채팅(`POST /chat-sessions`)이 열려 403(FORBIDDEN_ROLE) → 화면에 "세션을 시작하지 못했습니다"가 떴다. 백엔드는 정상(require_student)이고 프론트가 진입을 열어준 게 원인.
+  - `BottomNav`: 관리자면 FAB 미렌더. `MainPage`: 관리자 첫 화면을 관리 대시보드(AdminPage)로, `openChat`은 관리자면 무시. 홈 탭도 관리자면 AdminPage 렌더.
+- **채팅 간헐 502(BEDROCK_ERROR) 수정**: 원인은 자격증명/리전이 아니라 `max_tokens=1024`에서 모델이 tool_use 블록을 완성하기 전에 잘림 → 파서가 "no tool_use block" → 502. bedrock_logs의 실패 error가 "Bedrock returned an invalid response"였고 대부분 호출은 성공했음.
+  - `llm/client.py _REFINE_MAX_TOKENS` 1024 → 2048. 실서버 학생 대화 3건(8턴) 전부 200, 502 재발 없음.
+- **문서 실배포 반영(이 커밋)**: 초기 계획(RDS/ElastiCache 관리형)과 실제 배포가 달랐다 — 실제는 **EC2 한 대에 PostgreSQL·Redis 직접 설치**, systemd `univoice`(user `ubuntu`, workers 2, 8501), 리전 `ap-northeast-2` 코드 고정, `.env`는 4키(DATABASE_URL·REDIS_URL·LLM_MODEL_ID·PORT)뿐(AWS_REGION 넣으면 pydantic extra_forbidden으로 기동 실패).
+  - `docs/aws-deployment.md`를 실제 구성·재배포 절차로 전면 개정. `docs/README.md`의 SSoT 경로를 `.kiro/specs/complaint-assistant/requirements.md`로 정정. `backend-design.md`의 카테고리 "7종→8종", 리전/`max_tokens` 서술을 실제 코드에 맞춤.

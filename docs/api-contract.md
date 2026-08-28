@@ -118,7 +118,7 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 | `DRAFT_NOT_COMPLETE` | 409 | 확정안 없이 접수 시도 | 접수 버튼을 감췄어야 한다 |
 | `TURN_IN_PROGRESS` | 409 | 이전 턴이 아직 진행 중 | 입력창을 잠갔어야 한다 |
 | `INVALID_TRANSITION` | 409 | 현재 상태에서 갈 수 없는 전이 | 상세를 다시 받아 버튼 재계산 |
-| `HOLD_REASON_REQUIRED` | 422 | 보류인데 사유가 비었다 | 모달에서 미리 막았어야 한다 |
+| `HOLD_REASON_REQUIRED` | 422 | 보류·거절인데 사유가 비었다 | 모달에서 미리 막았어야 한다 |
 | `BEDROCK_ERROR` | 502 | 모델 호출 실패 | 재시도 버튼. 대화는 남아 있다 |
 
 **"일어나면 안 되는 일"로 적힌 것들**(`FORBIDDEN_ROLE`·`DRAFT_NOT_COMPLETE`·`TURN_IN_PROGRESS`·
@@ -437,7 +437,8 @@ def verify_password(body: VerifyIn, user = Depends(current_user)) -> None: ...
 **실행 API도 비밀번호를 다시 받아 검증한다.** 이 호출은 화면 흐름을 위한 것이지
 실행 권한을 주는 것이 아니다. 여기를 건너뛰고 철회를 직접 불러도 서버가 막는다.
 
-**남용 방지**: 실패 횟수를 세어 제한한다(값은 7장).
+**남용 방지**: 실패 횟수 제한(rate-limit)은 **1차 범위 밖이라 구현하지 않았다.** bcrypt 해싱과
+비밀번호 8자 규칙으로 무차별 대입 비용을 높이는 선에서 감수한다(실서비스 전환 시 Redis 카운터로 추가).
 
 ---
 
@@ -809,16 +810,16 @@ def open_complaint(cid: int, user = Depends(require_admin)) -> ComplaintOut: ...
 #### 18~21. 결정 버튼 넷
 
 ```js
-export async function acceptComplaint(id) { ... }          // 확인   → 처리중
-export async function resolveComplaint(id) { ... }         // 처리중 → 해결완료
-export async function holdComplaint(id, reason) { ... }    // 확인   → 보류 (사유 필수)
-export async function rejectComplaint(id) { ... }          // 확인   → 거절
+export async function acceptComplaint(id) { ... }          // 확인        → 처리중
+export async function resolveComplaint(id) { ... }         // 처리중·보류 → 해결완료
+export async function holdComplaint(id, reason) { ... }    // 확인        → 보류 (사유 필수)
+export async function rejectComplaint(id, reason) { ... }  // 확인        → 거절 (사유 필수)
 ```
 ```python
 @router.post("/admin/complaints/{cid}/accept")
 def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut: ...
-@router.post("/admin/complaints/{cid}/resolve")     # ... AND status='처리중'
-@router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인'
+@router.post("/admin/complaints/{cid}/resolve")     # ... AND status IN ('처리중','보류')
+@router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인', body=HoldIn (사유 필수)
 @router.post("/admin/complaints/{cid}/hold")
 def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut: ...
 ```
@@ -826,9 +827,14 @@ def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
 | 함수 | 파라미터 | 전제 상태 | 결과 상태 | 추가로 건드리는 것 |
 |---|---|---|---|---|
 | `accept` | `id` | `확인` | `처리중` | — |
-| `resolve` | `id` | `처리중` | `해결완료` | — |
-| `hold` | `id`, `reason` | `확인` | `보류` | 사유가 코멘트로 함께 남는다 |
-| `reject` | `id` | `확인` | `거절` | — |
+| `resolve` | `id` | `처리중` 또는 `보류` | `해결완료` | — |
+| `hold` | `id`, `reason` | `확인` | `보류` | 사유가 코멘트로 함께 남는다 (필수) |
+| `reject` | `id`, `reason` | `확인` | `거절` | 사유가 코멘트로 함께 남는다 (필수) |
+
+> **`resolve`로 들어오는 경로는 둘이다** — `처리중`과 `보류`. 보류로 세워둔 민원이 실제로
+> 해결되면 처리중을 다시 거치지 않고 바로 해결완료로 넘긴다.
+> **`reject`도 사유가 필수다** — 보류와 동일하게 상태 전이와 사유 저장을 한 트랜잭션으로 묶어
+> 사유 없는 거절이 남지 않게 한다. 사유가 비면 `422 HOLD_REASON_REQUIRED`.
 
 **전부 `200 Complaint`(갱신된 상태)를 돌려준다.** 프론트는 응답으로 화면을 다시 그린다.
 
@@ -934,12 +940,13 @@ interface BedrockLog {
        ↓     ↓     ↓
    ┌──────┐ ┌────┐ ┌────┐
    │처리중 │ │보류│ │거절│
-   └──┬───┘ └────┘ └────┘
-      │ resolve
-      ↓
-   ┌────────┐
-   │해결완료 │
-   └────────┘
+   └──┬───┘ └─┬──┘ └────┘
+      │ resolve │ resolve
+      └────┬────┘
+           ↓
+      ┌────────┐
+      │해결완료 │
+      └────────┘
 
    [학생] withdraw — 어느 상태에서든, 본인 것만 → 철회
 ```
@@ -948,9 +955,9 @@ interface BedrockLog {
 
 - `미확인`에는 결정 버튼을 그리지 않는다. 먼저 `open`을 불러 `확인`으로 만든다
 - `확인`에서는 수락·보류·거절 세 개만. `해결 완료`는 안 보인다
-- `처리중`에서는 `해결 완료` 하나만
+- `처리중`과 `보류`에서는 `해결 완료` 하나만 (보류도 완료로 넘길 수 있다)
 - `해결완료`·`거절`은 최종이라 버튼이 없다. 코멘트는 계속 가능하다
-- 보류 버튼은 사유 입력 모달을 띄우고, **빈 값이면 전송하지 않는다**
+- 보류·거절 버튼은 사유 입력 모달을 띄우고, **빈 값이면 전송하지 않는다**
 
 **서버가 지킬 것**
 
@@ -1210,7 +1217,7 @@ app/llm/            BedrockClient — 도구 호출로 분류·정제
 - **폴링 주기** — "실시간 반영"을 새로고침으로 할지, 몇 초 간격 폴링으로 할지.
   SSE·WebSocket은 1차 범위 밖으로 본다
 - **`is_complete=true` 이후 재대화의 미리보기 교체** — 새 확정안이 이전 것을 덮는 게 맞는지
-- **`verifyPassword` 실패 횟수 제한** — 몇 번 틀리면 얼마나 막을지
+- ~~**`verifyPassword`/로그인 실패 횟수 제한**~~ — **1차 범위 밖으로 결정, 구현하지 않음.** bcrypt + 8자 규칙으로 감수(실서비스 전환 시 Redis 카운터로 추가)
 - **`send_message` 타임아웃** — Bedrock이 느릴 때 프론트가 얼마나 기다릴지
 - **워커 수와 커넥션 풀 크기** — LLM 호출이 수 초라 동시 사용자 수에 맞춰 정한다.
   EC2 인스턴스 크기, PostgreSQL `max_connections`와 함께 본다

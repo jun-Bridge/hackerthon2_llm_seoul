@@ -74,7 +74,7 @@ app/
 ├─ llm/                    ★ Bedrock이 사는 곳
 │  ├─ client.py            invoke_model 호출
 │  ├─ tools.py             ask_followup · classify_and_refine 스키마
-│  ├─ choices.py           카테고리 7종 · 카테고리별 고정 칩
+│  ├─ choices.py           카테고리 8종 · 카테고리별 고정 칩
 │  └─ prompts.py           시스템 프롬프트 · 압축 프롬프트
 │
 └─ core/
@@ -155,10 +155,13 @@ def accept(complaint_id, school_id):
 |---|---|---|
 | `open_detail` | `미확인` | `확인` (아니면 아무 일 없음 — 멱등) |
 | `accept` | `확인` | `처리중` |
-| `resolve` | `처리중` | `해결완료` |
-| `hold` | `확인` | `보류` + 코멘트 (한 트랜잭션) |
-| `reject` | `확인` | `거절` |
+| `resolve` | `처리중` 또는 `보류` | `해결완료` |
+| `hold` | `확인` | `보류` + 코멘트 (한 트랜잭션, 사유 필수) |
+| `reject` | `확인` | `거절` + 코멘트 (한 트랜잭션, 사유 필수) |
 | `withdraw` | 무관 | `철회` (소유자만) |
+
+`resolve`로 들어오는 전제는 둘이다 — `처리중`과 `보류`(보류도 완료로 넘긴다).
+`reject`도 `hold`와 같이 사유가 필수이며 상태 전이와 코멘트 저장을 한 트랜잭션으로 묶는다.
 
 `open_detail`만 0행이어도 오류가 아니다. 이미 확인 이후라는 뜻이고,
 여러 번 열어도 안전해야 하기 때문이다.
@@ -271,12 +274,16 @@ POST /auth/login  { email, password }
 ```python
 def verify_password(user_id, password) -> None:
     if not bcrypt.checkpw(password, user_repo.get_hash(conn, user_id)):
-        rate_limit.hit(f"verify:{user_id}")     # 실패 횟수 누적
         raise WrongPassword()                    # → 401
 ```
 
 **실행 API가 비밀번호를 다시 받아 또 검증한다.** 이 호출은 화면 순서를 위한 것이지
 실행 권한을 주는 티켓이 아니다. 건너뛰고 철회를 직접 불러도 막힌다.
+
+> **실패 횟수 제한(rate-limit)은 1차 범위 밖이다 — 구현하지 않았다.** 무차별 대입 방어의
+> 정석이지만, bcrypt 해싱이 시도당 비용을 크게 만들고 비밀번호 8자 규칙이 있어 데모 범위에서는
+> 감수한다. 실서비스로 가면 Redis에 실패 카운터(`ratelimit:{user_id}` 등)를 두고 N회 초과 시
+> 짧게 잠그는 방식으로 붙일 수 있다(코드 변경은 이 함수와 `login`에 국한).
 
 ---
 
@@ -609,14 +616,14 @@ CLASSIFY_AND_REFINE = {
 
 | 출처 | 무엇 | 왜 |
 |---|---|---|
-| **고정 목록** (`llm/choices.py`) | 카테고리 7종, 카테고리별 흔한 증상 | 모델이 매번 다른 문구를 내면 화면이 흔들린다 |
+| **고정 목록** (`llm/choices.py`) | 카테고리 8종, 카테고리별 흔한 증상 | 모델이 매번 다른 문구를 내면 화면이 흔들린다 |
 | **모델** (`ask_followup.choices`) | 맥락에 맞춘 선택지 | 고정 목록에 없는 상황을 덮는다 |
 
 ```python
 # services/session_service.py
 def _merge_choices(missing: str, model_choices: list[str], category: str | None):
     if missing == "category":
-        return CATEGORIES                      # 7종 고정. 모델 것을 쓰지 않는다
+        return CATEGORIES                      # 8종 고정. 모델 것을 쓰지 않는다
     fixed = DETAIL_CHIPS.get(category, [])
     merged = fixed + [c for c in model_choices if c not in fixed]
     return merged[:5] + ["직접 입력"]
@@ -625,8 +632,8 @@ def _merge_choices(missing: str, model_choices: list[str], category: str | None)
 **`missing='detail'`인데 카테고리가 아직 없으면** 고정 칩을 붙일 근거가 없다.
 그때는 모델이 준 선택지만 쓴다. 순서를 서버가 강제하지 않기 때문에 생길 수 있는 상황이다.
 
-**카테고리만은 모델 선택지를 무시하고 고정 7종을 쓴다.** `complaints.category`가
-그 7개 중 하나여야 하는데, 모델이 "냉난방 문제"처럼 살짝 다른 문구를 주면 매칭이 깨진다.
+**카테고리만은 모델 선택지를 무시하고 고정 8종을 쓴다.** `complaints.category`가
+그 8개 중 하나여야 하는데, 모델이 "냉난방 문제"처럼 살짝 다른 문구를 주면 매칭이 깨진다.
 
 **나머지 단계는 고정 칩을 앞에 두고 모델 것을 뒤에 붙인다.** 자주 쓰는 것이 먼저 보이고,
 드문 상황은 모델이 채운다. 마지막은 항상 "직접 입력"이다 — 선택지가 다 안 맞을 수 있다.
@@ -841,7 +848,7 @@ Redis는 그것을 다시 읽지 않으려는 캐시일 뿐이다.
 
 | 규칙 | 어기면 |
 |---|---|
-| **리전을 명시하지 않는다** | 팀마다 배정 리전이 다르고 IAM이 타 리전을 전부 차단한다 → `AccessDenied` |
+| **배정 리전(`ap-northeast-2`)을 명시한다** | 다른 리전으로 나가면 IAM이 차단한다 → `AccessDenied`. 실배포에서는 이 리전을 코드에 고정했다 |
 | **`global.` 추론 프로필을 쓴다** | raw 모델 id는 `on-demand throughput isn't supported` |
 | **자격증명을 코드에 넣지 않는다** | EC2 인스턴스 프로파일이 자동으로 잡힌다 |
 
@@ -850,13 +857,15 @@ Redis는 그것을 다시 읽지 않으려는 캐시일 뿐이다.
 import boto3, json
 from app.core.config import settings
 
-# 리전 인자를 주지 않는다 — EC2가 자기 리전을 알려준다
-_bedrock = boto3.client(service_name="bedrock-runtime")
+# 배정 리전을 명시한다 — 실배포 EC2의 IAM 역할이 ap-northeast-2 에 묶여 있다
+_bedrock = boto3.client(service_name="bedrock-runtime", region_name="ap-northeast-2")
 
 MODEL_ID = settings.LLM_MODEL_ID      # "global.anthropic.claude-sonnet-5"
 ```
 
 **모델 id를 `config`에서 읽는다.** 대회에서 허용 모델이 바뀌거나 더 싼 모델로 내릴 수 있다.
+**리전은 코드에 `ap-northeast-2`로 고정**했다 — `.env`에 `AWS_REGION`을 넣으면 pydantic
+`extra_forbidden`으로 앱이 죽으므로 환경변수로 두지 않는다.
 
 ### 8.2 어떤 API를 쓰나
 
@@ -865,7 +874,7 @@ MODEL_ID = settings.LLM_MODEL_ID      # "global.anthropic.claude-sonnet-5"
 ```python
 body = json.dumps({
     "anthropic_version": "bedrock-2023-05-31",   # 고정값
-    "max_tokens": 1024,
+    "max_tokens": 2048,                          # tool_use(공문서 본문)가 잘려 502 나던 문제로 1024→2048 상향
     "system": SYSTEM_PROMPT,                     # 문자열 하나
     "messages": [...],
     "tools": [ASK_FOLLOWUP, CLASSIFY_AND_REFINE],
@@ -1148,7 +1157,7 @@ def signup(email, password, admin_code):
 - **버퍼 크기 N과 압축 임계치** — 작으면 압축이 자주 돌아 비용이 늘고, 크면 맥락이 길어진다
 - **압축용 모델** — 본 응답과 같은 것을 쓸지 더 싼 것을 쓸지
 - 세션 TTL · 초안 TTL · 턴 TTL
-- `verify_password` 실패 횟수 제한
+- ~~`verify_password`/로그인 실패 횟수 제한~~ — **1차 범위 밖으로 결정, 구현하지 않음** (§6.5)
 - 마이그레이션 도구 (Alembic을 쓸지, `init_db.py` 한 장으로 갈지)
 - 정리 작업을 어디서 돌릴지 — 별도 프로세스 vs 요청 중 기회적으로.
   대상: 빈 세션 · 고아 대화(`chat_session_id`·`complaint_id` 둘 다 NULL) · 만료 잠금

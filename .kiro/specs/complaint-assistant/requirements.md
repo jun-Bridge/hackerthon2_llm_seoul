@@ -461,6 +461,7 @@ SET NULL이면 세션만 사라지고 대화는 `complaint_id`에 매달려 남�
 ## Out of Scope (1차)
 
 - 이메일 인증, OAuth 로그인
+- 로그인·비밀번호 재확인(`verifyPassword`)의 실패 횟수 제한(rate-limit) — bcrypt 해싱과 비밀번호 8자 규칙으로 무차별 대입 비용을 높이는 선에서 감수한다 (실서비스 전환 시 Redis 카운터로 추가)
 - 완전 무기명(내부 추적조차 없는 익명) — 어뷰징 대응 및 철회 기능을 위해 최소 추적(`submitted_by_user_id`)은 유지
 - 다국어 지원
 - 이미지 첨부
