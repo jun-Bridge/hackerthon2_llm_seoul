@@ -1,0 +1,37 @@
+:root {
+  --text-main: #0F172A;
+  --text-sub: #475569;
+  --text-muted: #94A3B8;
+  --primary: #2563EB;
+  --primary-dark: #1D4ED8;
+  --primary-light: #EFF6FF;
+  --bg-main: #FFFFFF;
+  --bg-sub: #F8FAFC;
+  --border-light: #F1F5F9;
+  --border-default: #E2E8F0;
+  --radius-full: 9999px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: var(--bg-main);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#root { height: 100vh; width: 100vw; overflow: hidden; }
+
+.status-pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
+.status-미확인 { background: #FEF3C7; color: #92400E; }
+.status-확인 { background: #DBEAFE; color: #1E40AF; }
+.status-처리중 { background: #FEF9C3; color: #854D0E; }
+.status-해결완료 { background: #DCFCE7; color: #15803D; }
+.status-보류 { background: #F1F5F9; color: #475569; }
+.status-거절 { background: #FEE2E2; color: #B91C1C; }
+
+.page-body { flex: 1; overflow-y: auto; padding: 10px 16px 80px; -webkit-overflow-scrolling: touch; }
+.page-body::-webkit-scrollbar { display: none; }
