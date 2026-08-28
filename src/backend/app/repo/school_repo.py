@@ -15,7 +15,10 @@ def find_by_domain(conn, domain: str) -> dict | None:
         {"id": int, "name": str} 또는 없으면 None.
         None이면 호출부(auth_service.signup)가 UnsupportedDomainError를 던진다.
     """
-    raise NotImplementedError
+    return conn.execute(
+        "SELECT id, name FROM schools WHERE email_domain = %s",
+        (domain,),
+    ).fetchone()
 
 
 def list_all(conn) -> list[dict]:
@@ -25,7 +28,14 @@ def list_all(conn) -> list[dict]:
         [{"name": str, "email_domain": str, "aliases": list[str]}, ...]
         id는 반환하지 않는다 — 가입 요청에 school_id를 쓰지 않으므로.
     """
-    raise NotImplementedError
+    rows = conn.execute(
+        "SELECT name, email_domain, aliases FROM schools ORDER BY name"
+    ).fetchall()
+    # aliases 컬럼이 NULL이면 빈 리스트로 정규화 (프론트가 항상 배열을 기대).
+    for r in rows:
+        if r.get("aliases") is None:
+            r["aliases"] = []
+    return rows
 
 
 def verify_admin_code(conn, school_id: int, code: str) -> bool:
@@ -39,4 +49,8 @@ def verify_admin_code(conn, school_id: int, code: str) -> bool:
     Returns:
         일치하는 코드가 있으면 True.
     """
-    raise NotImplementedError
+    row = conn.execute(
+        "SELECT 1 FROM admin_codes WHERE school_id = %s AND code = %s LIMIT 1",
+        (school_id, code),
+    ).fetchone()
+    return row is not None

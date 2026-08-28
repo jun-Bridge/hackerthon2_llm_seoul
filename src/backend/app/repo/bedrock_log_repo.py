@@ -19,9 +19,29 @@ def add(
     error: str | None = None,
 ) -> None:
     """호출 1건을 기록한다. is_complete는 도구 호출(확정)이 성사됐는지."""
-    raise NotImplementedError
+    conn.execute(
+        """
+        INSERT INTO bedrock_logs
+            (school_id, model_id, is_complete, latency_ms, input_tokens, output_tokens, error)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (school_id, model_id, is_complete, latency_ms, input_tokens, output_tokens, error),
+    )
 
 
 def list_recent(conn, school_id: int, limit: int = 50) -> list[dict]:
-    """최근 호출 로그. 관리자 화면 GET /admin/bedrock-logs 용."""
-    raise NotImplementedError
+    """최근 호출 로그. 관리자 화면 GET /admin/bedrock-logs 용.
+
+    school_id로 스코프해 다른 학교 호출은 보이지 않게 한다.
+    """
+    return conn.execute(
+        """
+        SELECT id, called_at, model_id, is_complete, latency_ms,
+               input_tokens, output_tokens, error
+        FROM bedrock_logs
+        WHERE school_id = %s
+        ORDER BY called_at DESC
+        LIMIT %s
+        """,
+        (school_id, limit),
+    ).fetchall()
