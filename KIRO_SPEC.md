@@ -11,6 +11,7 @@
 docs/
 ├─ api-contract.md                 ★ 프론트·백 연결 규약 (HTTP 경계)
 ├─ backend-design.md               백엔드 내부 상세 (흐름도·트랜잭션 경계)
+├─ team-split.md                   ★ 3인 디렉토리 단위 작업 분배
 ├─ dev-log.md                      결정의 배경과 과정 (append-only)
 ├─ requirements_v1.md              v1 설계 — 동결, 원칙 참조용
 └─ proposal_v1.md                  v1 제안서 — 동결
