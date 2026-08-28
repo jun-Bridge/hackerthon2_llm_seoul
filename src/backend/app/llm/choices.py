@@ -33,13 +33,20 @@ _DIRECT_INPUT = "직접 입력"
 
 
 def merge_choices(
-    missing: str, model_choices: Sequence[str] | None, category: str | None
+    missing: str,
+    model_choices: Sequence[str] | None,
+    category: str | None,
+    exclude: Sequence[str] | None = None,
 ) -> list[str]:
     """고정 칩과 모델 제안을 정규화해 결정론적 최종 선택지를 만든다.
 
-    ``category`` 요청에는 모델 값을 신뢰하지 않고 고정 taxonomy의 새 복사본만
-    반환한다. 그 외 요청에는 알려진 카테고리의 고정 칩과 모델 제안을 순서대로
-    합친 뒤 공백·빈 값·중복을 제거하고 ``직접 입력``을 마지막에 한 번 둔다.
+    - ``category`` 요청: 모델 값을 신뢰하지 않고 고정 taxonomy의 새 복사본만 반환.
+    - ``detail`` 요청: 그 카테고리의 고정 증상 칩(DETAIL_CHIPS) + 모델 제안을 합친다.
+    - ``location`` 요청: **고정 증상 칩을 붙이지 않는다.** 위치를 묻는 자리에 증상 칩이
+      섞이면 안 되므로 모델이 준 위치 선택지만 쓴다.
+
+    ``exclude``에 담긴 값(이미 사용자가 고른 단서)은 결과에서 제외한다 — 같은 답을
+    다시 제시하지 않기 위함. 공백·빈 값·중복을 제거하고 ``직접 입력``을 마지막에 한 번 둔다.
     입력 리스트와 모듈의 고정 목록은 변경하지 않는다.
     """
     if missing not in _SUPPORTED_MISSING:
@@ -57,7 +64,14 @@ def merge_choices(
     ):
         raise ValueError("model_choices must be a sequence or None")
 
-    candidates = [*DETAIL_CHIPS.get(category, ()), *(model_choices or ())]
+    # 이미 고른 단서 집합 (정규화해서 비교)
+    excluded = {
+        e.strip() for e in (exclude or []) if isinstance(e, str) and e.strip()
+    }
+
+    # detail 단계에서만 고정 증상 칩을 앞에 붙인다. location 단계는 모델 것만.
+    fixed = DETAIL_CHIPS.get(category, ()) if missing == "detail" else ()
+    candidates = [*fixed, *(model_choices or ())]
     merged: list[str] = []
     seen: set[str] = set()
 
@@ -65,7 +79,12 @@ def merge_choices(
         if not isinstance(candidate, str):
             raise ValueError("choice items must be strings")
         normalized = candidate.strip()
-        if not normalized or normalized == _DIRECT_INPUT or normalized in seen:
+        if (
+            not normalized
+            or normalized == _DIRECT_INPUT
+            or normalized in seen
+            or normalized in excluded
+        ):
             continue
         seen.add(normalized)
         merged.append(normalized)

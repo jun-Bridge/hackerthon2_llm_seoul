@@ -63,10 +63,10 @@ def test_accept_no_row_returns_false():
     assert complaint_repo.accept(conn, 5, 3) is False
 
 
-def test_resolve_requires_처리중():
+def test_resolve_requires_처리중_or_보류():
     conn = FakeConn([FakeResult(rowcount=1)])
     complaint_repo.resolve(conn, 1, 1)
-    assert "status = '처리중'" in conn.last_sql
+    assert "status IN ('처리중', '보류')" in conn.last_sql
     assert "'해결완료'" in conn.last_sql
 
 

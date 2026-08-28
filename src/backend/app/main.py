@@ -1,6 +1,7 @@
 """FastAPI 진입점. 라우터 등록 → 정적 프론트 mount (순서 중요) → 예외 핸들러 등록.
 
-실행: uvicorn app.main:app --host 0.0.0.0 --port 8501 --workers 4
+실행(개발): uvicorn app.main:app --host 0.0.0.0 --port 8501 --workers 2
+(실배포는 systemd 유닛 `univoice`가 같은 명령을 --workers 2로 실행한다 — docs/aws-deployment.md)
 (src/backend 를 작업 디렉토리로 두거나 PYTHONPATH에 넣는다 — 임포트가 app.* 로 시작하므로)
 
 정본: docs/backend-design.md §2, api-contract.md 6장.

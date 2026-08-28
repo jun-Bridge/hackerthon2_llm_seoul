@@ -118,7 +118,7 @@ fetch(url, { credentials: 'include', ... })   // 모든 요청에 이것만 붙�
 | `DRAFT_NOT_COMPLETE` | 409 | 확정안 없이 접수 시도 | 접수 버튼을 감췄어야 한다 |
 | `TURN_IN_PROGRESS` | 409 | 이전 턴이 아직 진행 중 | 입력창을 잠갔어야 한다 |
 | `INVALID_TRANSITION` | 409 | 현재 상태에서 갈 수 없는 전이 | 상세를 다시 받아 버튼 재계산 |
-| `HOLD_REASON_REQUIRED` | 422 | 보류인데 사유가 비었다 | 모달에서 미리 막았어야 한다 |
+| `HOLD_REASON_REQUIRED` | 422 | 보류·거절인데 사유가 비었다 | 모달에서 미리 막았어야 한다 |
 | `BEDROCK_ERROR` | 502 | 모델 호출 실패 | 재시도 버튼. 대화는 남아 있다 |
 
 **"일어나면 안 되는 일"로 적힌 것들**(`FORBIDDEN_ROLE`·`DRAFT_NOT_COMPLETE`·`TURN_IN_PROGRESS`·
@@ -231,11 +231,11 @@ interface Preview {           // AI가 확정한 민원 초안
 | 6 | `changePassword` | `PATCH /auth/password` | `change_password` | 비밀번호 변경 | `users` R/W |
 | 7 | `deleteAccount` | `DELETE /auth/me` | `delete_account` | 탈퇴 | `users` D · `complaints` W(SET NULL) |
 | 7-1 | `verifyPassword` | `POST /auth/verify-password` | `verify_password` | 비밀번호 확인만 | `users` R |
-| 8 | `startSession` | `POST /chat-sessions` | `create_session` | 세션 생성 | `chat_sessions` W |
-| 8-1 | `listSessions` | `GET /chat-sessions` | `list_sessions` | **과거 대화 목록** | `chat_sessions` R |
-| 8-2 | `getSession` | `GET /chat-sessions/{sid}` | `get_session` | 세션 메타·현재 단계 | `chat_sessions` R |
+| 8 | `startSession` (프론트 실구현: `createSession`) | `POST /chat-sessions` | `create_session` | 세션 생성 | `chat_sessions` W |
+| 8-1 | `listSessions` ⚠️ | `GET /chat-sessions` | `list_sessions` | **과거 대화 목록** | `chat_sessions` R |
+| 8-2 | `getSession` ⚠️ | `GET /chat-sessions/{sid}` | `get_session` | 세션 메타·현재 단계 | `chat_sessions` R |
 | 9 | `sendMessage` | `POST /chat-sessions/{sid}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 · `bedrock_logs` W · Redis R/W |
-| 10 | `getSessionConversation` | `GET /chat-sessions/{sid}/conversation` | `get_conversation` | 대화 복구 | `complaint_conversations` R |
+| 10 | `getSessionConversation` ⚠️ | `GET /chat-sessions/{sid}/conversation` | `get_conversation` | 대화 복구 | `complaint_conversations` R |
 | 11 | `submitSession` | `POST /chat-sessions/{sid}/submit` | `submit_session` | **정식 접수** | `complaints` W · `chat_sessions` W |
 | 12 | `listComplaints` | `GET /complaints` | `list_complaints` | 게시판 목록 | `complaints` R |
 | 13 | `getComplaint` | `GET /complaints/{id}` | `get_complaint` | 상세 (상태 안 바뀜) | `complaints` R · `complaint_comments` R |
@@ -244,14 +244,22 @@ interface Preview {           // AI가 확정한 민원 초안
 | 16 | `getStats` | `GET /admin/stats` | `get_stats` | 상태별 집계 | `complaints` R |
 | 17 | `openComplaint` | `POST /admin/complaints/{id}/open` | `open_complaint` | **상세 + 확인 자동전환** | `complaints` R/W · `complaint_comments` R |
 | 18 | `acceptComplaint` | `POST /admin/complaints/{id}/accept` | `accept` | 확인 → 처리중 | `complaints` W |
-| 19 | `resolveComplaint` | `POST /admin/complaints/{id}/resolve` | `resolve` | 처리중 → 해결완료 | `complaints` W |
-| 20 | `holdComplaint` | `POST /admin/complaints/{id}/hold` | `hold` | 확인 → 보류 **+ 사유** | `complaints` W · `complaint_comments` W |
-| 21 | `rejectComplaint` | `POST /admin/complaints/{id}/reject` | `reject` | 확인 → 거절 | `complaints` W |
+| 19 | `resolveComplaint` | `POST /admin/complaints/{id}/resolve` | `resolve` | 처리중·보류 → 해결완료 | `complaints` W |
+| 20 | `holdComplaint` | `POST /admin/complaints/{id}/hold` | `hold` | 확인 → 보류 **+ 사유(필수)** | `complaints` W · `complaint_comments` W |
+| 21 | `rejectComplaint` | `POST /admin/complaints/{id}/reject` | `reject` | 확인 → 거절 **+ 사유(필수)** | `complaints` W · `complaint_comments` W |
 | 22 | `addComment` | `POST /admin/complaints/{id}/comments` | `add_comment` | 코멘트 추가 | `complaint_comments` W |
 | 23 | `getBedrockLogs` | `GET /admin/bedrock-logs` | `get_bedrock_logs` | 호출 로그 (심사용) | `bedrock_logs` R |
 
 `R` 읽기 · `W` 쓰기 · `D` 삭제. 16~23은 `role == 'admin'` 필수, 아니면 403.
 **모든 `complaints` 접근에는 `WHERE school_id = <세션값>`이 붙는다.** 아래 개별 항목에서 반복하지 않는다.
+
+> **⚠️ 표시 = 백엔드는 구현됐으나 프론트가 아직 안 쓰는 엔드포인트다** (2026-08-28 실코드 기준).
+> `#8-1 listSessions`·`#8-2 getSession`·`#10 getSessionConversation`은 라우트·서비스가 모두 있으나,
+> 프론트에 "과거 대화 사이드바"와 "새로고침 대화 복구" UI가 아직 없어 호출되지 않는다
+> (정본 Requirement 2.1의 프론트 미구현분). 대화는 매 턴 DB에 저장되므로 데이터 손실은 없다.
+>
+> **`#12 listComplaints`는 백엔드가 `category` 쿼리 필터도 받는다**(계약 초과 구현). 게시판 카테고리 탭용이며,
+> 현재 프론트는 `status`만 보낸다. `?category=<정본 8종 중 하나>`로 필터링 가능.
 
 ---
 
@@ -437,7 +445,8 @@ def verify_password(body: VerifyIn, user = Depends(current_user)) -> None: ...
 **실행 API도 비밀번호를 다시 받아 검증한다.** 이 호출은 화면 흐름을 위한 것이지
 실행 권한을 주는 것이 아니다. 여기를 건너뛰고 철회를 직접 불러도 서버가 막는다.
 
-**남용 방지**: 실패 횟수를 세어 제한한다(값은 7장).
+**남용 방지**: 실패 횟수 제한(rate-limit)은 **1차 범위 밖이라 구현하지 않았다.** bcrypt 해싱과
+비밀번호 8자 규칙으로 무차별 대입 비용을 높이는 선에서 감수한다(실서비스 전환 시 Redis 카운터로 추가).
 
 ---
 
@@ -809,16 +818,16 @@ def open_complaint(cid: int, user = Depends(require_admin)) -> ComplaintOut: ...
 #### 18~21. 결정 버튼 넷
 
 ```js
-export async function acceptComplaint(id) { ... }          // 확인   → 처리중
-export async function resolveComplaint(id) { ... }         // 처리중 → 해결완료
-export async function holdComplaint(id, reason) { ... }    // 확인   → 보류 (사유 필수)
-export async function rejectComplaint(id) { ... }          // 확인   → 거절
+export async function acceptComplaint(id) { ... }          // 확인        → 처리중
+export async function resolveComplaint(id) { ... }         // 처리중·보류 → 해결완료
+export async function holdComplaint(id, reason) { ... }    // 확인        → 보류 (사유 필수)
+export async function rejectComplaint(id, reason) { ... }  // 확인        → 거절 (사유 필수)
 ```
 ```python
 @router.post("/admin/complaints/{cid}/accept")
 def accept(cid: int, user = Depends(require_admin)) -> ComplaintOut: ...
-@router.post("/admin/complaints/{cid}/resolve")     # ... AND status='처리중'
-@router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인'
+@router.post("/admin/complaints/{cid}/resolve")     # ... AND status IN ('처리중','보류')
+@router.post("/admin/complaints/{cid}/reject")      # ... AND status='확인', body=HoldIn (사유 필수)
 @router.post("/admin/complaints/{cid}/hold")
 def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut: ...
 ```
@@ -826,9 +835,14 @@ def hold(cid: int, body: HoldIn, user = Depends(require_admin)) -> ComplaintOut:
 | 함수 | 파라미터 | 전제 상태 | 결과 상태 | 추가로 건드리는 것 |
 |---|---|---|---|---|
 | `accept` | `id` | `확인` | `처리중` | — |
-| `resolve` | `id` | `처리중` | `해결완료` | — |
-| `hold` | `id`, `reason` | `확인` | `보류` | 사유가 코멘트로 함께 남는다 |
-| `reject` | `id` | `확인` | `거절` | — |
+| `resolve` | `id` | `처리중` 또는 `보류` | `해결완료` | — |
+| `hold` | `id`, `reason` | `확인` | `보류` | 사유가 코멘트로 함께 남는다 (필수) |
+| `reject` | `id`, `reason` | `확인` | `거절` | 사유가 코멘트로 함께 남는다 (필수) |
+
+> **`resolve`로 들어오는 경로는 둘이다** — `처리중`과 `보류`. 보류로 세워둔 민원이 실제로
+> 해결되면 처리중을 다시 거치지 않고 바로 해결완료로 넘긴다.
+> **`reject`도 사유가 필수다** — 보류와 동일하게 상태 전이와 사유 저장을 한 트랜잭션으로 묶어
+> 사유 없는 거절이 남지 않게 한다. 사유가 비면 `422 HOLD_REASON_REQUIRED`.
 
 **전부 `200 Complaint`(갱신된 상태)를 돌려준다.** 프론트는 응답으로 화면을 다시 그린다.
 
@@ -934,12 +948,13 @@ interface BedrockLog {
        ↓     ↓     ↓
    ┌──────┐ ┌────┐ ┌────┐
    │처리중 │ │보류│ │거절│
-   └──┬───┘ └────┘ └────┘
-      │ resolve
-      ↓
-   ┌────────┐
-   │해결완료 │
-   └────────┘
+   └──┬───┘ └─┬──┘ └────┘
+      │ resolve │ resolve
+      └────┬────┘
+           ↓
+      ┌────────┐
+      │해결완료 │
+      └────────┘
 
    [학생] withdraw — 어느 상태에서든, 본인 것만 → 철회
 ```
@@ -948,9 +963,9 @@ interface BedrockLog {
 
 - `미확인`에는 결정 버튼을 그리지 않는다. 먼저 `open`을 불러 `확인`으로 만든다
 - `확인`에서는 수락·보류·거절 세 개만. `해결 완료`는 안 보인다
-- `처리중`에서는 `해결 완료` 하나만
+- `처리중`과 `보류`에서는 `해결 완료` 하나만 (보류도 완료로 넘길 수 있다)
 - `해결완료`·`거절`은 최종이라 버튼이 없다. 코멘트는 계속 가능하다
-- 보류 버튼은 사유 입력 모달을 띄우고, **빈 값이면 전송하지 않는다**
+- 보류·거절 버튼은 사유 입력 모달을 띄우고, **빈 값이면 전송하지 않는다**
 
 **서버가 지킬 것**
 
@@ -1210,7 +1225,7 @@ app/llm/            BedrockClient — 도구 호출로 분류·정제
 - **폴링 주기** — "실시간 반영"을 새로고침으로 할지, 몇 초 간격 폴링으로 할지.
   SSE·WebSocket은 1차 범위 밖으로 본다
 - **`is_complete=true` 이후 재대화의 미리보기 교체** — 새 확정안이 이전 것을 덮는 게 맞는지
-- **`verifyPassword` 실패 횟수 제한** — 몇 번 틀리면 얼마나 막을지
+- ~~**`verifyPassword`/로그인 실패 횟수 제한**~~ — **1차 범위 밖으로 결정, 구현하지 않음.** bcrypt + 8자 규칙으로 감수(실서비스 전환 시 Redis 카운터로 추가)
 - **`send_message` 타임아웃** — Bedrock이 느릴 때 프론트가 얼마나 기다릴지
 - **워커 수와 커넥션 풀 크기** — LLM 호출이 수 초라 동시 사용자 수에 맞춰 정한다.
   EC2 인스턴스 크기, PostgreSQL `max_connections`와 함께 본다

@@ -56,8 +56,23 @@ class SessionDetailOut(BaseModel):
     preview: "RefinedPreview | None"
 
 
+class ImageAttachment(BaseModel):
+    """학생이 첨부한 이미지 한 장. base64 원본만 받고 DB에는 저장하지 않는다.
+
+    프론트가 data URL(`data:image/jpeg;base64,....`)을 통째로 보내도 되고,
+    media_type + data로 나눠 보내도 된다. 서버(validation)가 정규화·검증한다.
+    """
+
+    media_type: str | None = None
+    """예: 'image/jpeg'. data가 data URL이면 생략 가능(그때 서버가 추출)."""
+    data: str
+    """base64 문자열 또는 'data:image/...;base64,...' data URL."""
+
+
 class SendMessageIn(BaseModel):
-    message: str
+    # 이미지만 보내고 텍스트를 비울 수 있어 기본값을 둔다(서비스가 이미지 유무로 검증).
+    message: str = ""
+    image: "ImageAttachment | None" = None
 
 
 class RefinedPreview(BaseModel):
