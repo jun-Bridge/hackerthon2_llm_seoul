@@ -14,6 +14,7 @@ from app.core.errors import (
     EmailTakenError,
     InvalidAdminCodeError,
     InvalidCredentialsError,
+    UnauthenticatedError,
     UnsupportedDomainError,
     WrongPasswordError,
 )
@@ -135,13 +136,14 @@ def logout(login_sid: str) -> None:
 def get_me(user_id: int) -> Me:
     """current_user가 준 user_id로 표시용 정보 조립. school_name은 조인해서 채운다.
 
-    NOTE(B 협의 필요): user_repo 에 email + school_name 을 함께 주는 조회 함수가
-    필요하다. 현재 스텁에는 find_by_email(email 기준)만 있고 user_id 기준 조회가 없다.
-    B 에게 user_repo.find_me(conn, user_id) -> {user_id, email, role, school_name}
-    추가를 요청한다. 그 전까지는 아래 호출이 AttributeError 로 뜬다.
+    user_repo.find_me 는 schools 를 조인해 {user_id, email, role, school_name} 을 준다.
+    세션은 유효한데 계정이 사라진 경우(예: 탈퇴 직후 남은 세션) None 이 오므로,
+    표시할 계정이 없다 → UnauthenticatedError(401) 로 돌린다 (판단은 서비스 책임).
     """
     with pool.transaction() as conn:
         info = user_repo.find_me(conn, user_id)
+    if info is None:
+        raise UnauthenticatedError("로그인이 필요합니다.")
     return Me(
         user_id=info["user_id"],
         email=info["email"],

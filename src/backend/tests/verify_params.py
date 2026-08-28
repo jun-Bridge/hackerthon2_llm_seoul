@@ -59,6 +59,7 @@ def exercise(conn):
 
     user_repo.create(conn, 1, "e@a.ac.kr", "h", "student")
     user_repo.find_by_email(conn, "e@a.ac.kr")
+    user_repo.find_me(conn, 1)
     user_repo.get_password_hash(conn, 1)
     user_repo.change_password(conn, 1, "h2")
     user_repo.delete(conn, 1)

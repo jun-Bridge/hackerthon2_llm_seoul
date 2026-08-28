@@ -39,6 +39,27 @@ def find_by_email(conn, email: str) -> dict | None:
     ).fetchone()
 
 
+def find_me(conn, user_id: int) -> dict | None:
+    """GET /auth/me · 로그인 응답용 표시 정보. schools를 조인해 학교명까지 채운다.
+
+    find_by_email은 email 기준(로그인용)이라 user_id로 못 찾고 school_name도 없어서,
+    current_user가 준 user_id로 조회하는 경로를 따로 둔다.
+
+    Returns:
+        {"user_id": int, "email": str, "role": str, "school_name": str} 또는 None.
+        키 이름은 schemas.auth.Me 필드에 그대로 대응한다.
+    """
+    return conn.execute(
+        """
+        SELECT u.id AS user_id, u.email, u.role, s.name AS school_name
+        FROM users u
+        JOIN schools s ON s.id = u.school_id
+        WHERE u.id = %s
+        """,
+        (user_id,),
+    ).fetchone()
+
+
 def get_password_hash(conn, user_id: int) -> str | None:
     """verify_password, 탈퇴/철회 비밀번호 재확인용. 존재하지 않으면 None."""
     row = conn.execute(
