@@ -39,12 +39,11 @@ def withdraw(cid: int, body: WithdrawIn, user = Depends(current_user)):
 
 ```
 app/
-├─ main.py                 FastAPI 인스턴스. 라우터 등록 → 정적 파일 mount (순서 중요)
+├─ main.py                 FastAPI 인스턴스. 라우터 등록 → GET /health(인라인) → 정적 파일 mount (순서 중요)
 │
 ├─ api/
 │  ├─ deps.py              Depends 제공자 — current_user, require_admin, require_session_owner
 │  └─ routes/
-│     ├─ health.py         GET /health
 │     ├─ schools.py        GET /schools
 │     ├─ auth.py           가입·로그인·로그아웃·비밀번호·탈퇴·검증
 │     ├─ session.py        대화 세션 4개
@@ -420,6 +419,12 @@ complaint_conversations
 id는 단조 증가하므로 `WHERE id > compacted_upto ORDER BY id`로 버퍼가 정확히 나온다.
 
 ### 7.4 압축은 언제 도나
+
+> **⚠️ 구현 상태(2026-08-28)**: `session_service.compact()` 함수 자체는 구현·검증돼 있으나,
+> `send_message`가 턴 종료 후 이를 **호출하는 트리거가 아직 연결되지 않았다.** 즉 아래 흐름은
+> 설계이고, 현재 실코드는 압축을 자동 실행하지 않는다. 대신 `send_message`에 **세션당 총 턴 상한
+> (MAX_TURNS)**이 있어 무한 누적을 막는다. 데모 대화는 짧아 실질 영향이 없고, 활성화하려면
+> `send_message`의 finally 뒤에 임계치 검사 + `compact(session_id)` 호출(백그라운드)만 붙이면 된다.
 
 ```
 턴 종료 (응답을 이미 보낸 뒤)

@@ -200,7 +200,9 @@ cd ~/univoice/src/backend
 ```
 - `AccessDenied` → IAM 역할에 `bedrock:InvokeModel` 권한이 없거나 리전이 배정 리전과 다름.
 - `on-demand throughput isn't supported` → raw 모델 id를 씀. `global.` 프로필 id를 써야 함.
-- `/health`의 `"bedrock":true`가 실제 소형 호출로 확인된 값이다.
+- `/health`의 `"bedrock":true`는 `bedrock` 클라이언트의 `list_foundation_models()`로 **도달 여부만**
+  확인한 값이다(모델을 실제로 호출하지 않아 비용 0). 실패(자격증명·네트워크·권한)는 삼켜 `false`가 되고
+  서버는 계속 200으로 뜬다.
 
 ---
 

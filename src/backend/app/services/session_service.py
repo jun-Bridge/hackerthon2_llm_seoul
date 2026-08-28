@@ -16,6 +16,7 @@ from app.core.errors import (
 )
 from app.llm import client as llm_client
 from app.llm.choices import CATEGORIES, merge_choices
+from app.services import image_service as image_service
 from app.llm.types import CompactResult, RefineResult, Usage
 from app.repo import (
     bedrock_log_repo,
@@ -77,6 +78,32 @@ def _normalize_message(text: Any) -> str:
     if len(normalized) > 2000:
         raise DomainError("메시지는 2000자 이하여야 합니다.")
     return normalized
+
+
+def _normalize_message_with_image(text: Any) -> str:
+    """이미지가 함께 올 때의 텍스트 정규화 — 빈 텍스트를 허용한다(사진만 신고)."""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        raise DomainError("메시지는 문자열이어야 합니다.")
+    normalized = text.strip()
+    if len(normalized) > 2000:
+        raise DomainError("메시지는 2000자 이하여야 합니다.")
+    return normalized
+
+
+def _normalize_image(image: Any) -> dict[str, str] | None:
+    """첨부 이미지를 검증하고 서버에서 리사이즈·JPEG 재인코딩한다. 없으면 None.
+
+    image는 {media_type?, data} 형태의 Mapping(스키마 ImageAttachment). 프론트는 원본을
+    그대로 보내고, 크기 축소·형식 변환 같은 복잡한 처리는 image_service가 전담한다.
+    처리 못 하는 이미지는 DomainError(400).
+    """
+    if image is None:
+        return None
+    if not isinstance(image, Mapping):
+        raise DomainError("이미지 형식이 올바르지 않습니다.")
+    return image_service.prepare_for_bedrock(image.get("media_type"), image.get("data"))
 
 
 def _require_open_session(session: Mapping[str, Any]) -> None:
@@ -282,9 +309,30 @@ def get_conversation(session_id: int, user_id: int) -> list[ConversationTurn]:
         return [conversation_turn_from_row(row) for row in rows]
 
 
-def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
-    """학생 발화 한 턴을 저장하고 DB 연결 없이 LLM을 호출해 결과를 반영한다."""
-    normalized_text = _normalize_message(text)
+def send_message(
+    session_id: int,
+    user_id: int,
+    text: str,
+    image: Mapping[str, Any] | None = None,
+) -> RefineResultOut:
+    """학생 발화 한 턴을 저장하고 DB 연결 없이 LLM을 호출해 결과를 반영한다.
+
+    image가 오면 이번 턴 LLM 호출에만 사용하고 DB에는 저장하지 않는다(익명성).
+    대화 기록에는 텍스트(이미지 첨부 표시 포함)만 남긴다.
+    """
+    normalized_image = _normalize_image(image)
+    # 이미지가 있으면 텍스트는 비어도 된다 — 사진만으로 신고할 수 있어야 한다.
+    if normalized_image is not None:
+        normalized_text = _normalize_message_with_image(text)
+    else:
+        normalized_text = _normalize_message(text)
+
+    # DB에 남길 학생 발화 텍스트: 이미지가 있으면 표시를 덧붙인다(원문 이미지는 저장 안 함).
+    stored_text = normalized_text
+    if normalized_image is not None:
+        stored_text = (
+            f"{normalized_text}\n[사진 첨부]" if normalized_text else "[사진 첨부]"
+        )
 
     # 존재·소유·종료 여부를 lock 획득 전에 빠르게 확인한다.
     with pool.transaction() as conn:
@@ -303,9 +351,11 @@ def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
             if not isinstance(turns, list):
                 raise ServiceContractError("conversation rows must be a list")
 
-            replay = _replay_duplicate(turns, session_id, normalized_text)
-            if replay is not None:
-                return replay
+            # 이미지가 붙은 턴은 같은 텍스트여도 새 정보이므로 중복 재생하지 않는다.
+            if normalized_image is None:
+                replay = _replay_duplicate(turns, session_id, normalized_text)
+                if replay is not None:
+                    return replay
             if len(turns) >= _MAX_SESSION_MESSAGES:
                 raise ConversationStuckError(
                     "대화가 너무 길어 새 대화에서 다시 시작해야 합니다."
@@ -315,14 +365,14 @@ def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
                 conn,
                 session_id,
                 "student",
-                normalized_text,
+                stored_text,
             )
             turns_with_student: list[Mapping[str, Any]] = [
                 *turns,
                 {
                     "id": student_turn_id,
                     "role": "student",
-                    "content": normalized_text,
+                    "content": stored_text,
                     "choices": None,
                     "refined_json": None,
                 },
@@ -350,7 +400,7 @@ def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
 
         # Bedrock 호출 중에는 pool connection을 보유하지 않는다.
         try:
-            result = llm_client.refine(context, buffer)
+            result = llm_client.refine(context, buffer, normalized_image)
         except llm_client.BedrockError as exc:
             with pool.transaction() as conn:
                 _add_bedrock_log(conn, school_id, False, exc.usage)

@@ -231,11 +231,11 @@ interface Preview {           // AI가 확정한 민원 초안
 | 6 | `changePassword` | `PATCH /auth/password` | `change_password` | 비밀번호 변경 | `users` R/W |
 | 7 | `deleteAccount` | `DELETE /auth/me` | `delete_account` | 탈퇴 | `users` D · `complaints` W(SET NULL) |
 | 7-1 | `verifyPassword` | `POST /auth/verify-password` | `verify_password` | 비밀번호 확인만 | `users` R |
-| 8 | `startSession` | `POST /chat-sessions` | `create_session` | 세션 생성 | `chat_sessions` W |
-| 8-1 | `listSessions` | `GET /chat-sessions` | `list_sessions` | **과거 대화 목록** | `chat_sessions` R |
-| 8-2 | `getSession` | `GET /chat-sessions/{sid}` | `get_session` | 세션 메타·현재 단계 | `chat_sessions` R |
+| 8 | `startSession` (프론트 실구현: `createSession`) | `POST /chat-sessions` | `create_session` | 세션 생성 | `chat_sessions` W |
+| 8-1 | `listSessions` ⚠️ | `GET /chat-sessions` | `list_sessions` | **과거 대화 목록** | `chat_sessions` R |
+| 8-2 | `getSession` ⚠️ | `GET /chat-sessions/{sid}` | `get_session` | 세션 메타·현재 단계 | `chat_sessions` R |
 | 9 | `sendMessage` | `POST /chat-sessions/{sid}/messages` | `send_message` | **AI 되묻기·정제** | `complaint_conversations` W ×2 · `bedrock_logs` W · Redis R/W |
-| 10 | `getSessionConversation` | `GET /chat-sessions/{sid}/conversation` | `get_conversation` | 대화 복구 | `complaint_conversations` R |
+| 10 | `getSessionConversation` ⚠️ | `GET /chat-sessions/{sid}/conversation` | `get_conversation` | 대화 복구 | `complaint_conversations` R |
 | 11 | `submitSession` | `POST /chat-sessions/{sid}/submit` | `submit_session` | **정식 접수** | `complaints` W · `chat_sessions` W |
 | 12 | `listComplaints` | `GET /complaints` | `list_complaints` | 게시판 목록 | `complaints` R |
 | 13 | `getComplaint` | `GET /complaints/{id}` | `get_complaint` | 상세 (상태 안 바뀜) | `complaints` R · `complaint_comments` R |
@@ -244,14 +244,22 @@ interface Preview {           // AI가 확정한 민원 초안
 | 16 | `getStats` | `GET /admin/stats` | `get_stats` | 상태별 집계 | `complaints` R |
 | 17 | `openComplaint` | `POST /admin/complaints/{id}/open` | `open_complaint` | **상세 + 확인 자동전환** | `complaints` R/W · `complaint_comments` R |
 | 18 | `acceptComplaint` | `POST /admin/complaints/{id}/accept` | `accept` | 확인 → 처리중 | `complaints` W |
-| 19 | `resolveComplaint` | `POST /admin/complaints/{id}/resolve` | `resolve` | 처리중 → 해결완료 | `complaints` W |
-| 20 | `holdComplaint` | `POST /admin/complaints/{id}/hold` | `hold` | 확인 → 보류 **+ 사유** | `complaints` W · `complaint_comments` W |
-| 21 | `rejectComplaint` | `POST /admin/complaints/{id}/reject` | `reject` | 확인 → 거절 | `complaints` W |
+| 19 | `resolveComplaint` | `POST /admin/complaints/{id}/resolve` | `resolve` | 처리중·보류 → 해결완료 | `complaints` W |
+| 20 | `holdComplaint` | `POST /admin/complaints/{id}/hold` | `hold` | 확인 → 보류 **+ 사유(필수)** | `complaints` W · `complaint_comments` W |
+| 21 | `rejectComplaint` | `POST /admin/complaints/{id}/reject` | `reject` | 확인 → 거절 **+ 사유(필수)** | `complaints` W · `complaint_comments` W |
 | 22 | `addComment` | `POST /admin/complaints/{id}/comments` | `add_comment` | 코멘트 추가 | `complaint_comments` W |
 | 23 | `getBedrockLogs` | `GET /admin/bedrock-logs` | `get_bedrock_logs` | 호출 로그 (심사용) | `bedrock_logs` R |
 
 `R` 읽기 · `W` 쓰기 · `D` 삭제. 16~23은 `role == 'admin'` 필수, 아니면 403.
 **모든 `complaints` 접근에는 `WHERE school_id = <세션값>`이 붙는다.** 아래 개별 항목에서 반복하지 않는다.
+
+> **⚠️ 표시 = 백엔드는 구현됐으나 프론트가 아직 안 쓰는 엔드포인트다** (2026-08-28 실코드 기준).
+> `#8-1 listSessions`·`#8-2 getSession`·`#10 getSessionConversation`은 라우트·서비스가 모두 있으나,
+> 프론트에 "과거 대화 사이드바"와 "새로고침 대화 복구" UI가 아직 없어 호출되지 않는다
+> (정본 Requirement 2.1의 프론트 미구현분). 대화는 매 턴 DB에 저장되므로 데이터 손실은 없다.
+>
+> **`#12 listComplaints`는 백엔드가 `category` 쿼리 필터도 받는다**(계약 초과 구현). 게시판 카테고리 탭용이며,
+> 현재 프론트는 `status`만 보낸다. `?category=<정본 8종 중 하나>`로 필터링 가능.
 
 ---
 

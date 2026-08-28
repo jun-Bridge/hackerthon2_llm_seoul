@@ -53,7 +53,8 @@ def get_session(session_id: int, user: CurrentUser = Depends(require_student)):
 def send_message(
     session_id: int, body: SendMessageIn, user: CurrentUser = Depends(require_student)
 ):
-    return session_service.send_message(session_id, user.user_id, body.message)
+    image = body.image.model_dump() if body.image is not None else None
+    return session_service.send_message(session_id, user.user_id, body.message, image)
 
 
 # ── #10 대화 복구 ─────────────────────────────────────────────────

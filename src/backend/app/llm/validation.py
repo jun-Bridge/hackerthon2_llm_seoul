@@ -147,6 +147,54 @@ def validate_buffer(context: Any, buffer: Any) -> tuple[str | None, list[dict[st
     return normalized_context, normalized_buffer
 
 
+# Claude(Bedrock)가 받는 이미지 미디어 타입. gif/webp도 되지만 데모는 흔한 둘만 허용.
+_ALLOWED_IMAGE_MEDIA_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/gif", "image/webp"}
+)
+# 프론트는 원본을 그대로 보낸다(리사이즈는 서버 image_service가 한다). 원본 허용 상한을
+# 넉넉히 둔다: base64 약 20MB ≈ 원본 약 15MB. 이 1차 관문만 넘으면 서버가 축소해 Bedrock에 맞춘다.
+_MAX_IMAGE_BASE64_CHARS = 20_000_000
+
+
+def validate_image_attachment(media_type: Any, data: Any) -> dict[str, str]:
+    """학생 첨부 이미지를 검증해 {media_type, data(base64)} 로 정규화한다.
+
+    data는 순수 base64거나 'data:image/...;base64,...' data URL을 허용한다.
+    data URL이면 미디어 타입을 거기서 추출하고, media_type 인자가 함께 오면 일치해야 한다.
+    실제 base64 유효성/디코딩은 검사하지 않는다(Bedrock이 거부하면 502로 처리).
+    """
+    if not isinstance(data, str) or not data.strip():
+        raise ContractViolation("image data must be a non-empty string")
+    raw = data.strip()
+
+    extracted_type: str | None = None
+    if raw.startswith("data:"):
+        header, _, payload = raw.partition(",")
+        if not payload or ";base64" not in header:
+            raise ContractViolation("image data URL must be base64 encoded")
+        # header 예: data:image/jpeg;base64
+        extracted_type = header[len("data:") :].split(";", 1)[0].strip().lower()
+        raw = payload.strip()
+
+    resolved_type = (
+        extracted_type
+        if extracted_type
+        else (media_type.strip().lower() if isinstance(media_type, str) else None)
+    )
+    if extracted_type and isinstance(media_type, str) and media_type.strip():
+        if extracted_type != media_type.strip().lower():
+            raise ContractViolation("image media_type conflicts with data URL")
+
+    if resolved_type not in _ALLOWED_IMAGE_MEDIA_TYPES:
+        raise ContractViolation("image media_type is not supported")
+    if not raw:
+        raise ContractViolation("image data must not be empty")
+    if len(raw) > _MAX_IMAGE_BASE64_CHARS:
+        raise ContractViolation("image data exceeds the maximum size")
+
+    return {"media_type": resolved_type, "data": raw}
+
+
 def normalize_non_negative_int(value: Any, name: str, *, optional: bool = False) -> int | None:
     """bool을 제외한 0 이상의 정수만 허용한다."""
     if value is None and optional:
