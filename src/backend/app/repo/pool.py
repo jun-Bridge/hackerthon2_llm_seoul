@@ -46,6 +46,21 @@ def close_pool() -> None:
         _pool = None
 
 
+def ping() -> bool:
+    """PostgreSQL 도달 여부. /health가 호출한다.
+
+    가벼운 SELECT 1로 실제 커넥션을 확인한다. 실패(연결 불가·타임아웃 등)는
+    예외를 삼키고 False로 돌려준다 — DB가 죽어도 /health 자체는 200으로 뜨고
+    "db: false"로 사실을 알린다(requirements_v1 §6.5).
+    """
+    try:
+        with get_pool().connection() as conn:
+            conn.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 @contextmanager
 def transaction(pool: Optional[ConnectionPool] = None) -> Iterator:
     """트랜잭션 컨텍스트. with transaction() as conn: ... 형태로 쓴다.

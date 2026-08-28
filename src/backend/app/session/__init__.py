@@ -23,3 +23,15 @@ def get_redis() -> redis.Redis:
         settings = get_settings()
         _client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     return _client
+
+
+def ping() -> bool:
+    """Redis 도달 여부. /health가 호출한다.
+
+    PING 명령으로 확인하고, 실패는 예외를 삼켜 False로 돌려준다 —
+    Redis가 죽어도 /health 자체는 200으로 뜨고 "redis: false"로 알린다.
+    """
+    try:
+        return bool(get_redis().ping())
+    except Exception:
+        return False

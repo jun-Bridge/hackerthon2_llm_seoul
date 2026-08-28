@@ -32,10 +32,29 @@ register_exception_handlers(app)
 
 @app.get("/health")
 def health():
-    """프로세스 생존 확인. 프로세스가 응답하면 살아있는 것이다.
+    """프로세스·DB·Redis·Bedrock 도달 여부를 반환한다.
 
-    NOTE: DB·Redis·Bedrock 도달 여부까지 확인하려면 각 계층(B·C)의 ping 헬퍼가
-    필요하다. 아직 제공되지 않아 프로세스 생존만 반환한다. 계층 ping이 준비되면
-    {"process": "ok", "db": ..., "redis": ..., "bedrock": ...} 형태로 확장한다.
+    한 계층이 죽어도 서버는 200으로 뜨고 해당 필드만 false가 된다.
+    (requirements_v1 §6.5: "LLM이 죽어 있어도 서버는 뜨고 /health가 그 사실을 알려준다")
     """
-    return {"status": "ok"}
+    from app.repo.pool import ping as db_ping
+    from app.session import ping as redis_ping
+
+    # Bedrock: list_foundation_models로 실제 도달 확인 (비용 0, 모델 호출 아님).
+    # 실패(자격증명·네트워크·권한)는 삼켜 false로 — 서버는 계속 200으로 뜬다.
+    try:
+        import boto3
+        boto3.client("bedrock", region_name="ap-northeast-2").list_foundation_models()
+        bedrock_ok = True
+    except Exception:
+        bedrock_ok = False
+
+    db_ok = db_ping()
+    redis_ok = redis_ping()
+
+    return {
+        "status": "ok" if (db_ok and redis_ok and bedrock_ok) else "degraded",
+        "db": db_ok,
+        "redis": redis_ok,
+        "bedrock": bedrock_ok,
+    }
