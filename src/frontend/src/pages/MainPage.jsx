@@ -42,7 +42,7 @@ export default function MainPage() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#FFFFFF' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'transparent' }}>
       {tab !== 'profile' && <Header onProfileClick={() => setTab('profile')} />}
       <div className="page-body">{renderPage()}</div>
       <BottomNav currentTab={tab} onTabChange={setTab} isAdmin={isAdmin} onFabClick={() => setChatOpen(true)} />
