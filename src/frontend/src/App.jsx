@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
+import { ToastProvider } from './components/common/Toast';
 import { getMe } from './api/auth';
 import SplashPage from './pages/SplashPage';
 import AuthPage from './pages/AuthPage';
@@ -14,7 +15,7 @@ function AppRoot() {
   useEffect(() => {
     getMe()
       .then((me) => { if (me) setUser(me); })
-      .catch(() => {})               // 미로그인(401)이면 그냥 스플래시로
+      .catch(() => {})
       .finally(() => setChecking(false));
   }, [setUser]);
 
@@ -27,7 +28,9 @@ function AppRoot() {
 export default function App() {
   return (
     <AppProvider>
-      <AppRoot />
+      <ToastProvider>
+        <AppRoot />
+      </ToastProvider>
     </AppProvider>
   );
 }

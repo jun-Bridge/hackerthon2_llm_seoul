@@ -1,9 +1,9 @@
-.splash-screen { position: fixed; inset: 0; background: #FFF; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; z-index: 100; }
+.splash-screen { position: fixed; inset: 0; background: linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; z-index: 100; }
 .splash-logo-group { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 48px; }
 .splash-brand { font-size: 2rem; font-weight: 800; color: #2563EB; letter-spacing: -0.5px; }
 .splash-sub { font-size: 0.88rem; color: #64748B; }
 
-.auth-screen { position: fixed; inset: 0; background: #FFF; display: flex; flex-direction: column; overflow: hidden; z-index: 99; }
+.auth-screen { position: fixed; inset: 0; background: linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%); display: flex; flex-direction: column; overflow: hidden; z-index: 99; }
 .auth-back-row { padding: 14px 16px; flex-shrink: 0; }
 .btn-icon { background: none; border: none; font-size: 1.3rem; color: #0F172A; cursor: pointer; display: flex; align-items: center; }
 .auth-body { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 24px 24px 40px; max-width: 400px; width: 100%; margin: 0 auto; overflow-y: auto; }
