@@ -167,7 +167,7 @@ def _check_phase1(checks: Checks, tx: FakeTransactions) -> None:
          "withdrawn": False, "updated_at": _NOW}
     ]
     checks.true(ss.create_session(3, 7) == 9, "세션 생성 실패")
-    checks.true(ss.list_sessions(3)[0].id == 1, "세션 목록 실패")
+    checks.true(ss.list_sessions(3)[0].session_id == 1, "세션 목록 실패")
     checks.true(calls == [("create_session", tx.conn, 3, 7)], "세션 repo 인자 오류")
 
     cs.pool.transaction = tx.transaction
@@ -365,7 +365,7 @@ def _check_remaining_services(checks: Checks, tx: FakeTransactions) -> None:
     # 세션 복원과 전체 원문은 DB 정본을 사용한다.
     session = {
         "id": 11, "user_id": 3, "school_id": 7, "title": "누수",
-        "category": "위생 / 배관", "complaint_id": None,
+        "category": "위생 / 배관", "complaint_id": None, "updated_at": _NOW,
     }
     refined = {
         "category": "위생 / 배관", "location": "본관",

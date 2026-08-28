@@ -4,6 +4,7 @@
 정본: docs/backend-design.md §7, §7-1, §7-2.
 """
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from app.core.errors import (
@@ -211,6 +212,15 @@ def get_session(session_id: int, user_id: int) -> SessionDetailOut:
         turns = conversation_repo.list_by_session(conn, session_id)
         if not isinstance(turns, list):
             raise ServiceContractError("conversation rows must be a list")
+        # withdrawn 계산: 연결된 민원이 있는데 complaint_repo.get이 None이면
+        # 그 민원은 철회됨(repo가 철회를 조회에서 제외하므로). complaint_id가
+        # 없으면 애초에 접수 전이라 withdrawn=False. (api-contract #8-1)
+        complaint_id = session.get("complaint_id")
+        submitted = complaint_id is not None
+        withdrawn = (
+            submitted
+            and complaint_repo.get(conn, complaint_id, session["school_id"]) is None
+        )
 
     latest_assistant: Mapping[str, Any] | None = None
     refined_json: Mapping[str, Any] | None = None
@@ -247,11 +257,17 @@ def get_session(session_id: int, user_id: int) -> SessionDetailOut:
         if isinstance(stored_choices, list):
             choices = [str(c) for c in stored_choices]
 
+    updated_at = session.get("updated_at")
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+
     return SessionDetailOut(
-        id=session["id"],
+        session_id=session["id"],
         title=session.get("title"),
         category=session.get("category"),
-        complaint_id=session.get("complaint_id"),
+        submitted=submitted,
+        withdrawn=withdrawn,
+        updated_at=updated_at,
         step=step,
         choices=choices,
         preview=preview,

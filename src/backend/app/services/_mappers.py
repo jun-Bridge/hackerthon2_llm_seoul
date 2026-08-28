@@ -120,16 +120,21 @@ def _model(model_type: type[_ModelT], **values: Any) -> _ModelT:
 
 
 def session_summary_from_row(row: Mapping[str, Any]) -> SessionSummaryOut:
-    """``chat_session_repo.list_by_user`` row를 목록 응답으로 변환한다."""
+    """``chat_session_repo.list_by_user`` row를 목록 응답으로 변환한다.
+
+    계약(#8-1)은 complaint_id 대신 submitted 불린을 노출한다. 연결된 민원이
+    있으면(complaint_id 존재) 접수 완료 = submitted True.
+    """
     row = _mapping(row, "session row")
+    complaint_id = _optional_positive_int(
+        _required(row, "complaint_id"), "complaint_id"
+    )
     return _model(
         SessionSummaryOut,
-        id=_positive_int(_required(row, "id"), "id"),
+        session_id=_positive_int(_required(row, "id"), "id"),
         title=_text(_required(row, "title"), "title", optional=True),
         category=_category(_required(row, "category"), optional=True),
-        complaint_id=_optional_positive_int(
-            _required(row, "complaint_id"), "complaint_id"
-        ),
+        submitted=complaint_id is not None,
         withdrawn=_boolean(_required(row, "withdrawn"), "withdrawn"),
         updated_at=_timestamp(_required(row, "updated_at"), "updated_at"),
     )

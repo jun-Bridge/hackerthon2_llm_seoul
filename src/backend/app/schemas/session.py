@@ -26,23 +26,29 @@ class ConversationTurn(BaseModel):
 
 
 class SessionSummaryOut(BaseModel):
-    """GET /chat-sessions 목록 항목."""
+    """GET /chat-sessions 목록 항목. 필드명은 프론트 계약(api-contract #8-1) 정본.
 
-    id: int
+    submitted: 접수 완료(연결된 민원 존재) 여부. 계약은 complaint_id가 아니라
+    이 불린을 노출한다 — 프론트는 읽기 전용 판단에만 쓴다.
+    """
+
+    session_id: int
     title: str | None
     category: Category | None
-    complaint_id: int | None
+    submitted: bool
     withdrawn: bool
     updated_at: str
 
 
 class SessionDetailOut(BaseModel):
-    """GET /chat-sessions/{sid} 응답."""
+    """GET /chat-sessions/{sid} 응답. SessionSummary를 확장한다 (api-contract #8-2)."""
 
-    id: int
+    session_id: int
     title: str | None
     category: Category | None
-    complaint_id: int | None
+    submitted: bool
+    withdrawn: bool
+    updated_at: str
     step: str | None
     """현재 단계 캐시. 정본은 마지막 assistant 턴의 choices — 이 필드는 UI 편의용."""
     choices: list[str] | None = None
