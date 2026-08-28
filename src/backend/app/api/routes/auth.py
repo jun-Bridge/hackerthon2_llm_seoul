@@ -14,6 +14,7 @@ from app.schemas.auth import (
     LoginIn,
     Me,
     SignupIn,
+    VerifyIn,
 )
 from app.services import auth_service
 from app.session import login_session
@@ -90,3 +91,12 @@ def delete_account(
 ):
     auth_service.delete_account(user.user_id, body.password)
     response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+# ── #7-1 비밀번호 확인만 (철회·탈퇴 1단계) ───────────────────────
+@router.post("/verify-password", status_code=status.HTTP_204_NO_CONTENT)
+def verify_password(body: VerifyIn, user: CurrentUser = Depends(current_user)):
+    """되돌릴 수 없는 동작 전 본인 확인만 한다. 아무것도 바꾸지 않는다.
+    불일치면 auth_service가 WrongPasswordError(401) → 전역 핸들러가 WRONG_PASSWORD.
+    """
+    auth_service.verify_password(user.user_id, body.password)

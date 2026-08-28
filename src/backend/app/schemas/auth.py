@@ -34,6 +34,13 @@ class DeleteAccountIn(BaseModel):
     password: str
 
 
+class VerifyIn(BaseModel):
+    """POST /auth/verify-password 요청. 되돌릴 수 없는 동작 전 본인 확인만 한다.
+    아무것도 바꾸지 않는다 (api-contract #7-1)."""
+
+    password: str
+
+
 class Me(BaseModel):
     """GET /auth/me 응답. school_id는 내려주지 않는다 — 프론트가 쓸 일이 없다."""
 
