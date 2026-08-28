@@ -41,6 +41,14 @@ class VerifyIn(BaseModel):
     password: str
 
 
+class SignupOut(BaseModel):
+    """POST /auth/signup 응답 (api-contract #2). role은 프론트가 첫 화면을
+    학생/관리자로 가르는 데 쓴다 — 버리지 않고 함께 내려준다."""
+
+    user_id: int
+    role: Role
+
+
 class Me(BaseModel):
     """GET /auth/me 응답. school_id는 내려주지 않는다 — 프론트가 쓸 일이 없다."""
 

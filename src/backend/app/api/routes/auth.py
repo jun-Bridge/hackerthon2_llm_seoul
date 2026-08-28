@@ -14,6 +14,7 @@ from app.schemas.auth import (
     LoginIn,
     Me,
     SignupIn,
+    SignupOut,
     VerifyIn,
 )
 from app.services import auth_service
@@ -39,13 +40,14 @@ def _set_session_cookie(response: Response, sid: str) -> None:
 
 
 # ── #2 회원가입 (가입 즉시 로그인) ────────────────────────────────
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
+@router.post("/signup", status_code=status.HTTP_201_CREATED, response_model=SignupOut)
 def signup(body: SignupIn, response: Response):
-    user_id, _role = auth_service.signup(body.email, body.password, body.admin_code)
+    user_id, role = auth_service.signup(body.email, body.password, body.admin_code)
     # 가입 즉시 로그인 — 방금 만든 계정으로 세션 생성
     sid = auth_service.login(body.email, body.password)
     _set_session_cookie(response, sid)
-    return {"user_id": user_id}
+    # role까지 함께 내려준다 (api-contract #2: { user_id, role }).
+    return SignupOut(user_id=user_id, role=role)
 
 
 # ── #3 로그인 ─────────────────────────────────────────────────────
