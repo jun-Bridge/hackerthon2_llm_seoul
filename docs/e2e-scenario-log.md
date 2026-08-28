@@ -1,8 +1,11 @@
 # 엔드투엔드 실행 기록 — 학생 민원 접수 → 관리자 처리
 
-_2026-08-28 · 실서버(EC2 3.38.151.165:8501)에서 실제 요청/응답을 캡처한 기록_
+_2026-08-28 · 실서버(EC2 3.38.151.165:8501)에서 실제 요청/응답을 캡처한 기록 · 버그 수정 후 재검증판_
 
 이 문서는 **가설이나 설계가 아니라, 배포된 백엔드에 실제로 HTTP 요청을 쏴서 받은 응답**을 그대로 정리한 것이다. 학생과 관리자가 보는 것이 어떻게 다른지, 요구사항 로직이 실제로 도는지를 요청 단위로 보여준다.
+
+> **재검증 결과: 자동 검사 16/16 PASS.** 계약 정합 수정(`signup` 응답에 `role` 포함, `sendMessage`
+> 응답 필드명 `question`/`step`/`preview`)이 반영된 최신 백엔드로 다시 돌린 기록이다.
 
 - 서버: `http://3.38.151.165:8501/api` (FastAPI + PostgreSQL + Redis + AWS Bedrock)
 - 등장 계정: **학생**(조선대, 코드 없이 가입), **관리자**(조선대, 관리자 코드로 가입), **타학교 학생**(전북대)
@@ -16,13 +19,12 @@ _2026-08-28 · 실서버(EC2 3.38.151.165:8501)에서 실제 요청/응답을 �
 
 | STEP | 주체 | 요청 | 결과 |
 |---|---|---|---|
-| 1 | 학생 | `POST /auth/signup` (코드 없음) | 201, `user_id:8` → **student** |
-| 2 | 관리자 | `POST /auth/signup` (`admin_code: CHOSUN-ADMIN-2026`) | 201, `user_id:9` → **admin** |
+| 1 | 학생 | `POST /auth/signup` (코드 없음) | 201, `{user_id, role:"student"}` |
+| 2 | 관리자 | `POST /auth/signup` (`admin_code: CHOSUN-ADMIN-2026`) | 201, `{user_id, role:"admin"}` |
 | 3 | 학생 | `GET /auth/me` | `role: "student"`, `school_name: "조선대학교"` |
-| 4 | 관리자 | `GET /auth/me` | `role: "admin"`, `school_name: "조선대학교"` |
-| 5 | 타학교학생 | `POST /auth/signup` (`@jbnu.ac.kr`) | 201 → 전북대 소속 |
+| 4 | 타학교학생 | `POST /auth/signup` (`@jbnu.ac.kr`) | 201 → 전북대 소속 |
 
-**같은 가입 API인데 학교 코드 유무로 role이 갈린다.** 코드는 서버만 아는 값(`admin_codes` 시드)이라 클라이언트가 스스로 관리자라고 주장할 수 없다.
+**같은 가입 API인데 학교 코드 유무로 role이 갈린다.** 코드는 서버만 아는 값(`admin_codes` 시드)이라 클라이언트가 스스로 관리자라고 주장할 수 없다. **응답 body에 `role`이 함께 온다**(api-contract #2 준수 — 가입 직후 화면 분기용).
 
 ---
 
@@ -30,23 +32,24 @@ _2026-08-28 · 실서버(EC2 3.38.151.165:8501)에서 실제 요청/응답을 �
 
 `POST /chat-sessions` → `session_id:7` 발급.
 
-**STEP 7 — 학생: "화장실에 문제가 있어요"**
+**STEP 6 — 학생: "화장실에 문제가 있어요"**
 ```jsonc
-{ "is_complete": false, "missing": "location",
-  "follow_up_question": "화장실 문제가 발생한 위치가 어디인가요?",
-  "choices": ["학생회관 1층 화장실","공학관 3층 화장실","도서관 2층 화장실","기숙사 화장실","기타 건물/층·호실 직접 입력","직접 입력"] }
+{ "is_complete": false, "step": "location",
+  "question": "화장실이 어느 건물, 몇 층에 있는지 알려주실 수 있을까요?",
+  "choices": ["공학관 3층","본관 1층","학생회관 2층","서관 지하 1층","정확한 위치를 잘 모르겠어요","직접 입력"] }
 ```
 → Bedrock이 **위치가 부족**하다고 판단(`ask_followup`), 되묻기 + 선택지 생성.
+**응답 필드명은 계약대로 `question`/`step`**(구버전 `follow_up_question`/`missing` 아님).
 
-**STEP 8 — 학생: "본관 3층 남자화장실"**
+**STEP 7 — 학생: "본관 3층 남자화장실 세면대 누수"**
 ```jsonc
-{ "is_complete": false, "missing": "detail",
-  "follow_up_question": "본관 3층 남자화장실에서 구체적으로 어떤 문제가 있나요?",
-  "choices": ["물이 새는 현상/막힘","악취가 심함","변기/세면기 파손","바닥에 물이 고임","조명이 고장남","직접 입력"] }
+{ "is_complete": false, "step": "detail",
+  "question": "세면대에서 구체적으로 어떤 상태인가요?",
+  "choices": ["세면대 아래 배관에서 물이 계속 흘러나옴","물을 틀면 연결 부위에서 물이 샘", ...] }
 ```
-→ 위치는 확보, 이번엔 **상황(detail)** 을 되묻는다.
+→ 위치 확보, 이번엔 **상황(detail)** 을 되묻는다.
 
-**STEP 9 — 학생: "세면대 배수구에서 물이 계속 나고 바닥에 물이 고여 미끄럽습니다"**
+**STEP 8 — 학생: (상황 구체화)**
 ```jsonc
 { "is_complete": true,
   "preview": {
@@ -54,10 +57,11 @@ _2026-08-28 · 실서버(EC2 3.38.151.165:8501)에서 실제 요청/응답을 �
     "location": "본관 3층 남자화장실",
     "refined_title": "본관 3층 남자화장실 세면대 배수구 누수로 인한 바닥 미끄럼 위험",
     "refined_body": "[현상] ... [영향] ... [요청] ..." },
-  "title": "본관 3층 화장실 세면대 누수",
-  "category": "위생 / 배관" }
+  "title": "...", "category": "위생 / 배관" }
 ```
-→ 세 요소(카테고리·위치·상황)가 다 확정되니 `classify_and_refine` 도구로 **행정 문서체 확정안** 생성. 카테고리는 고정 7종 중 `위생 / 배관`으로 분류.
+→ 세 요소가 다 확정되니 `classify_and_refine` 도구로 **행정 문서체 확정안** 생성.
+**확정 응답에 `preview`(category/location/refined_title/refined_body 4필드)가 계약대로 실린다.**
+카테고리는 고정 목록 중 `위생 / 배관`으로 분류.
 
 **STEP 10 — `GET .../conversation`**: 위 왕복 전체(학생 3발화 + assistant 3발화 + choices)가 DB에서 그대로 복원됨 → **새로고침해도 대화가 살아있다.**
 
@@ -169,3 +173,18 @@ _2026-08-28 · 실서버(EC2 3.38.151.165:8501)에서 실제 요청/응답을 �
 | Bedrock 로그 | 막 9 |
 
 **결론**: "학생이 민원 넣으면 시설 관리자가 보고 처리한다 / 코멘트 / 민원 목록 / 상태" — 이 전 과정이 실제 서버에서 요청-응답으로 동작함을 확인했다. UI(화면)만 아직 없고, 백엔드 로직은 정본 요구사항대로 전부 구현되어 돈다.
+
+---
+
+## 재검증 요약 (버그 수정 후)
+
+자동 검사 **16/16 PASS**. 계약 정합 수정이 반영됨을 확인:
+
+| 이전 상태 | 수정 후 (이번 검증) |
+|---|---|
+| `signup` 응답에 `role` 없음 | ✅ `{user_id, role}` 반환 |
+| `sendMessage` 필드명 `follow_up_question`/`missing` | ✅ 계약대로 `question`/`step` |
+| 확정 응답 `preview` 구조 | ✅ `preview{category,location,refined_title,refined_body}` |
+
+나머지(학교 격리·익명·역할 403·상태전이 open→accept→resolve·코멘트·Bedrock 로그)도 전부 PASS.
+`/health`도 계층별(db/redis/bedrock) 상태를 반환하며 한 계층이 죽어도 200으로 뜬다(별도 검증).
