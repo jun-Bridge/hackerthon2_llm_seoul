@@ -238,12 +238,21 @@ def get_session(session_id: int, user_id: int) -> SessionDetailOut:
         else:
             step = None
 
+    # 지금 보여줄 칩 = 마지막 assistant 턴의 choices (api-contract #8-2).
+    # 저장된 값이 리스트가 아니면(예: NULL) 칩 없음(None)으로 둔다.
+    choices: list[str] | None = None
+    if latest_assistant is not None:
+        stored_choices = latest_assistant.get("choices")
+        if isinstance(stored_choices, list):
+            choices = [str(c) for c in stored_choices]
+
     return SessionDetailOut(
         id=session["id"],
         title=session.get("title"),
         category=session.get("category"),
         complaint_id=session.get("complaint_id"),
         step=step,
+        choices=choices,
         preview=preview,
     )
 

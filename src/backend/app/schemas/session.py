@@ -44,6 +44,8 @@ class SessionDetailOut(BaseModel):
     complaint_id: int | None
     step: str | None
     """현재 단계 캐시. 정본은 마지막 assistant 턴의 choices — 이 필드는 UI 편의용."""
+    choices: list[str] | None = None
+    """지금 보여줄 칩(마지막 assistant 턴의 선택지). 없으면 자유 입력만. (api-contract #8-2)"""
     preview: "RefinedPreview | None"
 
 
