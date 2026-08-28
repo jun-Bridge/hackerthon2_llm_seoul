@@ -110,7 +110,8 @@ def _children(node):
 
 
 # COUNT(*) 같은 함수·별칭은 컬럼이 아니므로 무시 목록에 둔다.
-IGNORE = {"n", "withdrawn"}  # SELECT ... AS <별칭>
+# school_name: user_repo.find_me 의 `s.name AS school_name` 응답용 별칭 (실 컬럼 아님).
+IGNORE = {"n", "withdrawn", "school_name"}  # SELECT ... AS <별칭>
 
 
 def main():
