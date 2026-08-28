@@ -831,3 +831,83 @@ SQL과 구현 세부를 정규식으로 걷어낼 때 코드 블록이 함께 �
 - **칩과 단계를 브라우저가 정한다.** 시안의 `detailChips` 상수와 `chatStep` 진행이 그렇다. 실제로는 **서버가 `choices`를 주고 단계도 모델이 정한다.** 시안 코드를 베끼면 서버가 준 값을 무시하고 클라이언트 상수를 쓰게 된다 — 가장 빠지기 쉬운 함정이라 8.1-1에 표로 박았다.
 
 **시안은 고치지 않았다.** 사이드바를 둘로 나눌지 탭으로 가를지가 판단이 필요한 문제라, 계약서에 차이를 명시하는 것까지만 했다.
+
+## [2026-08-27] Kiro spec 표준 포맷으로 전면 포팅
+세 파일의 **내용은 그대로**, **헤딩 구조와 태스크 표기법만** Kiro IDE가 기대하는 표준에 맞춰 재작성했다.
+직전 검토에서 세 파일 모두 커스텀 헤딩(`## User Stories`·`### TASK-001` 등)을 쓰고 있어 Kiro의
+요구사항 추적·태스크 실행 체크박스 UI가 온전히 동작하지 않을 수 있다는 문제를 확인했었다.
+
+**requirements.md**: `# Requirements Document` + `## Introduction` + `## Glossary` + `## Requirements`
+구조로 전환. User Story 34개를 `### Requirement N` + `**User Story:**` + `#### Acceptance Criteria`
+(WHEN/THEN/IF-THEN EARS 문법) 형식으로 재작성. 기존 `US-1.1` 같은 번호는 없어졌고 Requirement
+1~5(+2.1)로 그룹화했다. Data Model·ER·Status Workflow·Out of Scope 등 부속 섹션은 내용 변경 없이
+헤딩만 유지.
+
+**design.md**: `## Overview` + `## Architecture` + `## Components and Interfaces` +
+`## Data Models` + `## Correctness Properties`를 필수/권장 섹션으로 채웠다. 특히
+`## Correctness Properties`는 기존에 없던 섹션이라 새로 작성 — 학교 격리, 상태 전이 원자성,
+보류 원자성, 익명성, 확정안 무결성, 철회 가시성, 확인 전이 멱등성, 처리중 필수 경유, 대화
+영속성, 세션 소유권 10개를 불변식으로 명문화했다. 기존에 "정본은 backend-design.md/api-contract.md"로
+위임하던 부분은 유지하되(중복 방지 원칙은 지킴), Kiro가 요구하는 최소 섹션 자체는 이 문서 안에
+채워 넣었다.
+
+**tasks.md**: `# Implementation Plan` + `## Task Dependency Graph`(텍스트 다이어그램) +
+`## Tasks`(체크박스) + `## Notes` 구조로 전환. 기존 `### TASK-001~505` 형식(파일별 필드 나열)을
+`- [ ] N. 제목` + 하위 불릿 + `_Requirements: X.Y_` 참조 형식으로 재작성. 25개 태스크로 재번호
+(기존 38개 중 실질적으로 겹치거나 이미 이전 라운드에서 통합된 것들을 정리). 각 태스크 끝에
+requirements.md의 Requirement 번호를 명시해 추적성을 확보.
+
+**유지한 것**: 세 파일의 실질 내용(스키마, 상태 전이 규칙, LLM 도구 계약, 에러 코드, 테스트
+전략)은 손대지 않았다. 9차 적대적 검토로 다져진 정합성을 깨지 않기 위해 순수 포맷 변환만 수행.
+
+**영향받은 파일**: `.kiro/specs/complaint-assistant/{requirements,design,tasks}.md` 헤딩 구조
+전면 재작성 (내용 동일, 표기법만 변경).
+
+## [2026-08-27] 팀 분담용 모듈 스캐폴드 생성 — src/backend/app 계층 스텁
+
+문서(정본·계약)는 갖춰졌으니 팀원이 폴더 단위로 나눠 붙을 수 있도록 실제 코드 스캐폴드를 만들었다.
+
+**처음에 루트에 `app/`을 만든 실수를 바로잡았다.** 저장소 규약은 코드가 `src/` 아래 사는 것이고
+`src/backend/`가 이미 있었는데 루트에 따로 팠다. `src/backend/app`의 v1 캔버스 스캐폴드
+(`auth/chat/document/orchestrator/db/storage` README들 + `alembic/`)를 걷어내고 — 그건
+FastAPI+React 캔버스 편집 서비스의 잔재라 UniVoice 계층 구조와 안 맞는다 — 루트 `app/`을
+`src/backend/app/`으로 옮겼다.
+
+**계층 구조를 스텁 파일로 못박았다.** `docs/backend-design.md` §2의 `routes→services→repo/session/llm`
+구조를 그대로 디렉토리로 만들고, 각 모듈의 공개 함수를 시그니처 + docstring + `raise NotImplementedError`로
+채웠다. 임포트는 되지만 아직 구현 안 됐다는 뜻이다. 이렇게 하면:
+- 다른 모듈 담당자가 `from app.repo import complaint_repo`를 지금 당장 짜고 타입 체커로 검증할 수 있다.
+- 시그니처가 곧 계약이라 README 표처럼 옮겨 적다 어긋날 일이 없다.
+
+**만든 것**:
+- `src/backend/app/schemas/{common,auth,session,complaint}.py` — Pydantic 계약 타입.
+  `docs/api-contract.md`의 TS 인터페이스와 1:1. `ErrorCode` enum으로 오류 코드 16종 고정.
+  `ComplaintOut`에 `submitted_by_user_id` 대신 `is_mine`만 둔 것(익명성 불변식)을 타입에 박음.
+- `src/backend/app/core/{config,errors}.py` — 환경변수 읽는 유일한 곳 + 도메인 예외 15종
+  (각각 http_status·code를 갖고, 전역 핸들러가 `{error:{code,message}}`로 변환).
+- `src/backend/app/repo/*.py` — SQL 계층. 모든 함수가 `school_id`를 필수 인자로 받고,
+  상태 전이는 `UPDATE...WHERE status=<전제>` 반환 bool로 판정한다는 계약을 시그니처·docstring에 명시.
+- `src/backend/app/session/*.py` — Redis 계층. 키 문자열이 이 폴더 밖에 안 나오게, `SET NX` 잠금 규약 명시.
+- `src/backend/app/llm/*.py` — Bedrock 계층. `types.py`의 `RefineResult`/`Usage` dataclass가
+  session_service와의 계약. `repo`를 부르지 않고 `Usage`를 반환해 서비스가 로그를 적재한다는 규칙,
+  리전 미지정·`global.` 프로필·`tool_choice:any` 도구 둘 구조를 docstring에 박음.
+- `src/backend/app/services/*.py` — 판단 계층. 각 함수가 어떤 repo/session/llm을 어떤 순서로
+  부르는지(특히 `send_message`의 8단계, `submit`의 4단계 트랜잭션)를 docstring에 흐름으로 적음.
+- `src/backend/app/api/{deps,routes/*}.py` + `main.py` — 라우터는 얇게, 엔드포인트 목록만.
+  `openComplaint`가 POST인 이유, API 라우터를 정적 mount보다 먼저 등록하는 이유 명시.
+- `src/frontend/src/api/{client,auth,session,board,admin}.js` — 프론트 API 클라이언트.
+  `client.js`만 fetch를 알고 나머지는 그 위에 한 줄씩. `is_mine`·POST open·오류 분기 주의사항 주석.
+
+**계약 지도 문서 신설**: `src/backend/app/INTERFACES.md` — 모듈별로 "누가 무엇을 부르는가"를
+표로 정리하고, 시그니처를 합의 없이 바꾸면 어디가 깨지는지 시나리오로 적었다. 상세 스펙은
+여기 두지 않고 `design.md`/`backend-design.md`/`api-contract.md`를 가리킨다.
+
+**검증**: `app/**/*.py` 전부 AST 파싱 통과, `import app.services.*`가 llm/repo/session/schemas/core를
+전부 끌어오면서 에러 없음 — 모듈 간 계약이 실제로 맞물린다는 뜻(pydantic/fastapi 설치된 환경).
+
+**팀 분담 경계**(`src/backend/README.md`에 표로): 계정·인증 / AI 대화 / 민원·게시판·관리자 /
+공통(core·schemas·pool·main) 넷으로 나눴다. `schemas`와 `core/errors`는 모두가 의존하므로
+가장 먼저 확정(이미 스텁으로 채움). 작업 순서는 tasks.md 의존성 그래프대로 M0(Bedrock 실측)부터.
+
+**갱신**: `src/backend/README.md`(v1 캔버스 → UniVoice 계층), `src/frontend/src/api/README.md`,
+`KIRO_SPEC.md`(문서 지도에 스캐폴드 위치 추가).

@@ -9,14 +9,23 @@
 └─ tasks.md                        태스크 분해
 
 docs/
-├─ api-contract.md                 ★ 프론트·백 연결 규약 (구현 시작점)
+├─ api-contract.md                 ★ 프론트·백 연결 규약 (HTTP 경계)
+├─ backend-design.md               백엔드 내부 상세 (흐름도·트랜잭션 경계)
 ├─ dev-log.md                      결정의 배경과 과정 (append-only)
 ├─ requirements_v1.md              v1 설계 — 동결, 원칙 참조용
 └─ proposal_v1.md                  v1 제안서 — 동결
+
+src/backend/                       ★ 백엔드 코드 (팀 분담 스캐폴드 완료)
+├─ app/README.md                   계층 규칙·폴더별 책임
+├─ app/INTERFACES.md               ★ 모듈 간 호출 계약 (누가 무엇을 부르는가)
+├─ app/{api,services,repo,session,llm,core,schemas}/   계층별 스텁 (raise NotImplementedError)
+src/frontend/src/api/              ★ 프론트 API 클라이언트 (client + 도메인 4모듈 스텁)
 ```
 
-**구현을 시작한다면** `docs/api-contract.md`부터 본다. 함수 23개가 프론트·백 양쪽 시그니처와
-건드리는 테이블까지 적혀 있어서, 두 쪽이 서로를 기다리지 않고 각자 만들 수 있다.
+**구현을 시작한다면** `docs/api-contract.md`(HTTP 경계)와 `src/backend/app/INTERFACES.md`
+(모듈 간 계약)를 먼저 본다. 스텁 파일이 이미 함수 시그니처를 박아뒀으므로 팀원은 담당
+폴더의 `raise NotImplementedError` 본문만 채우면 되고, 두 쪽이 서로를 기다리지 않는다.
+**시그니처를 바꿔야 하면 계약 문서와 스텁을 먼저 고치고 알린다.**
 
 **기능이 왜 그런지 궁금하면** `.kiro/specs/complaint-assistant/requirements.md`.
 
