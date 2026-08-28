@@ -5,4 +5,12 @@
 """
 from fastapi import APIRouter
 
+from app.schemas.auth import SchoolOut
+from app.services import auth_service
+
 router = APIRouter(tags=["schools"])
+
+
+@router.get("/schools", response_model=list[SchoolOut])
+def list_schools():
+    return auth_service.list_schools()

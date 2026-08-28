@@ -32,5 +32,10 @@ register_exception_handlers(app)
 
 @app.get("/health")
 def health():
-    """프로세스·DB·Redis·Bedrock 도달 여부. 구현 시 각 계층 ping 결과를 반환."""
-    raise NotImplementedError
+    """프로세스 생존 확인. 프로세스가 응답하면 살아있는 것이다.
+
+    NOTE: DB·Redis·Bedrock 도달 여부까지 확인하려면 각 계층(B·C)의 ping 헬퍼가
+    필요하다. 아직 제공되지 않아 프로세스 생존만 반환한다. 계층 ping이 준비되면
+    {"process": "ok", "db": ..., "redis": ..., "bedrock": ...} 형태로 확장한다.
+    """
+    return {"status": "ok"}

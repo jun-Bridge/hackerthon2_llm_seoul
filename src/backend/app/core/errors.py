@@ -100,12 +100,37 @@ class BedrockError(DomainError):
 def register_exception_handlers(app) -> None:
     """main.py에서 호출한다: register_exception_handlers(app)
 
-    구현 시 아래를 등록:
-        @app.exception_handler(DomainError)
-        def handle_domain_error(request, exc: DomainError):
-            return JSONResponse(
-                status_code=exc.http_status,
-                content={"error": {"code": exc.code.value, "message": exc.message}},
-            )
+    - DomainError: 도메인 예외를 계약된 {"error": {code, message}} 형태로 변환
+    - RequestValidationError: Pydantic 검증 실패를 VALIDATION_FAILED(400)로 통일
+    - Exception: 예상치 못한 오류는 500으로, 내부 정보는 노출하지 않는다
     """
-    raise NotImplementedError
+    import logging
+
+    from fastapi import Request
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(DomainError)
+    async def handle_domain_error(request: Request, exc: DomainError):
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"error": {"code": exc.code.value, "message": exc.message}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation_error(request: Request, exc: RequestValidationError):
+        # 첫 번째 오류 메시지를 사람이 읽을 만한 형태로 전달
+        first = exc.errors()[0] if exc.errors() else {}
+        msg = first.get("msg", "입력값이 올바르지 않습니다.")
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"code": ErrorCode.VALIDATION_FAILED.value, "message": msg}},
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected(request: Request, exc: Exception):
+        logging.error("Unhandled exception", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "INTERNAL_ERROR", "message": "서버 오류가 발생했습니다."}},
+        )
