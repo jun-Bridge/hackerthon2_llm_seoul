@@ -49,12 +49,18 @@ def _admin_detail(conn, complaint_id: int, school_id: int) -> ComplaintOut:
 
 # --- 학생 게시판 ---
 
-def list_complaints(school_id: int, viewer_user_id: int, status: str | None = None) -> list[ComplaintOut]:
+def list_complaints(
+    school_id: int,
+    viewer_user_id: int,
+    status: str | None = None,
+    category: str | None = None,
+) -> list[ComplaintOut]:
     """게시판 목록. 철회 제외. 각 항목의 is_mine을 viewer_user_id와 대조해 계산하고
     submitted_by_user_id는 응답에서 제거한다. comments에는 보류 사유만 싣는다.
+    category가 주어지면 그 카테고리만(게시판 카테고리 탭).
     """
     with pool.transaction() as conn:
-        rows = complaint_repo.list(conn, school_id, status)
+        rows = complaint_repo.list(conn, school_id, status, category)
         return [
             complaint_from_row(
                 row,

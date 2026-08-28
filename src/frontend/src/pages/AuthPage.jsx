@@ -1,7 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
-import { schoolDatabase } from '../store/schools';
+import { listSchools, signup, login, getMe } from '../api/auth';
+import { ApiError } from '../api/client';
 import '../styles/auth.css';
+
+// 에러 코드 → 사용자에게 보일 문구. 서버 message가 있으면 그걸 우선 쓴다.
+const CODE_MSG = {
+  UNSUPPORTED_DOMAIN: '지원하지 않는 학교입니다.',
+  EMAIL_TAKEN: '이미 가입된 이메일입니다.',
+  INVALID_ADMIN_CODE: '유효하지 않은 코드입니다. 비워두면 학생으로 가입됩니다.',
+  INVALID_CREDENTIALS: '이메일 또는 비밀번호가 올바르지 않습니다.',
+  VALIDATION_FAILED: '입력 형식을 확인해 주세요.',
+};
 
 export default function AuthPage({ onBack, onLoginSuccess }) {
   const { setUser } = useApp();
@@ -14,10 +24,18 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
   const [isStaff, setIsStaff] = useState(false);
   const [adminCode, setAdminCode] = useState('');
   const [showPw, setShowPw] = useState(false);
+  const [schools, setSchools] = useState([]);
+  const [error, setError] = useState('');       // 폼 상단 경고
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    listSchools().then(setSchools).catch(() => setSchools([]));
+  }, []);
 
   const filteredSchools = schoolSearch.trim()
-    ? schoolDatabase.filter(s =>
-        s.name.includes(schoolSearch) || s.domain.includes(schoolSearch) || s.aliases.some(a => a.includes(schoolSearch))
+    ? schools.filter(s =>
+        s.name.includes(schoolSearch) || s.email_domain.includes(schoolSearch) ||
+        (s.aliases || []).some(a => a.includes(schoolSearch))
       ).slice(0, 8)
     : [];
 
@@ -25,15 +43,57 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
     setSelectedSchool(school);
     setSchoolSearch(school.name);
     setShowDropdown(false);
+    setError('');
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const domain = selectedSchool?.domain || 'kunsan.ac.kr';
-    const fullEmail = tab === 'login' ? email : `${email}@${domain}`;
-    const role = isStaff && adminCode ? 'staff' : 'student';
-    setUser({ email: fullEmail, role, schoolDomain: domain, schoolName: selectedSchool?.name || '국립군산대학교' });
+  // 로그인/가입 성공 후 실제 서버 세션에서 나를 가져와 세팅 (role은 서버가 정본)
+  const finishAuth = async () => {
+    const me = await getMe();          // { user_id, email, role, school_name }
+    setUser(me);
     onLoginSuccess();
+  };
+
+  const showError = (err) => {
+    if (err instanceof ApiError) {
+      setError(err.message || CODE_MSG[err.code] || '요청을 처리하지 못했습니다.');
+    } else {
+      setError('서버에 연결하지 못했습니다.');
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (submitting) return;
+
+    // ── 프론트 선검사 (서버가 정본이지만 UX용으로 먼저 막는다) ──
+    if (password.length < 8) {
+      setError('비밀번호는 8자 이상이어야 합니다.');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      if (tab === 'login') {
+        // 로그인: 이메일 전체 + 비밀번호
+        if (!email.trim()) { setError('이메일을 입력하세요.'); return; }
+        await login(email.trim(), password);
+      } else {
+        // 회원가입
+        if (!selectedSchool) { setError('소속 대학교를 선택하세요.'); return; }
+        if (!email.trim()) { setError('아이디를 입력하세요.'); return; }
+        if (isStaff && !adminCode.trim()) { setError('관리자 코드를 입력하거나 교직원 체크를 해제하세요.'); return; }
+        const fullEmail = `${email.trim()}@${selectedSchool.email_domain}`;
+        // 교직원 체크 시에만 코드 전송. 체크 안 하면 학생.
+        const code = isStaff ? adminCode.trim() : null;
+        await signup(fullEmail, password, code);   // 성공 시 서버가 쿠키 세팅(자동 로그인)
+      }
+      await finishAuth();
+    } catch (err) {
+      showError(err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -53,8 +113,8 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
         <span className="auth-subtitle">캠퍼스 시설 민원 도우미</span>
 
         <div className="auth-tabs">
-          <button className={`auth-tab ${tab === 'login' ? 'active' : ''}`} onClick={() => setTab('login')}>로그인</button>
-          <button className={`auth-tab ${tab === 'signup' ? 'active' : ''}`} onClick={() => setTab('signup')}>회원가입</button>
+          <button className={`auth-tab ${tab === 'login' ? 'active' : ''}`} onClick={() => { setTab('login'); setError(''); }}>로그인</button>
+          <button className={`auth-tab ${tab === 'signup' ? 'active' : ''}`} onClick={() => { setTab('signup'); setError(''); }}>회원가입</button>
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
@@ -62,14 +122,14 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
             <div className="auth-search-field">
               <i className="bi bi-search"></i>
               <input type="text" placeholder="소속 대학교 검색" value={schoolSearch}
-                onChange={(e) => { setSchoolSearch(e.target.value); setShowDropdown(true); }}
+                onChange={(e) => { setSchoolSearch(e.target.value); setShowDropdown(true); setSelectedSchool(null); }}
                 onFocus={() => setShowDropdown(true)} />
               {showDropdown && filteredSchools.length > 0 && (
                 <div className="school-dropdown">
                   {filteredSchools.map(s => (
-                    <div key={s.domain} className="school-item" onClick={() => handleSchoolSelect(s)}>
+                    <div key={s.email_domain} className="school-item" onClick={() => handleSchoolSelect(s)}>
                       <span>{s.name}</span>
-                      <span className="school-domain">@{s.domain}</span>
+                      <span className="school-domain">@{s.email_domain}</span>
                     </div>
                   ))}
                 </div>
@@ -80,35 +140,43 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
           <div className="auth-input-card">
             <input type={tab === 'login' ? 'email' : 'text'}
               placeholder={tab === 'login' ? '이메일을 입력하세요' : '아이디 입력'}
-              value={email} onChange={(e) => setEmail(e.target.value)} required />
-            {tab === 'signup' && selectedSchool && <span className="domain-suffix">@{selectedSchool.domain}</span>}
+              value={email} onChange={(e) => { setEmail(e.target.value); setError(''); }} required />
+            {tab === 'signup' && selectedSchool && <span className="domain-suffix">@{selectedSchool.email_domain}</span>}
           </div>
 
           <div className="auth-input-card">
-            <input type={showPw ? 'text' : 'password'} placeholder="비밀번호를 입력하세요"
-              value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <input type={showPw ? 'text' : 'password'} placeholder="비밀번호 (8자 이상)"
+              value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} required />
             <i className={`bi bi-eye${showPw ? '-slash' : ''}`} onClick={() => setShowPw(!showPw)} style={{ cursor: 'pointer', color: '#94A3B8' }}></i>
           </div>
 
           {tab === 'signup' && (
             <>
               <label className="staff-check">
-                <input type="checkbox" checked={isStaff} onChange={(e) => setIsStaff(e.target.checked)} />
-                <span>교직원으로 가입</span>
+                <input type="checkbox" checked={isStaff} onChange={(e) => { setIsStaff(e.target.checked); setError(''); }} />
+                <span>교직원으로 가입 (관리자 코드 필요)</span>
               </label>
               {isStaff && (
                 <div className="auth-input-card">
-                  <input type="text" placeholder="관리자 코드 입력" value={adminCode} onChange={(e) => setAdminCode(e.target.value)} />
+                  <input type="text" placeholder="관리자 코드 입력" value={adminCode} onChange={(e) => { setAdminCode(e.target.value); setError(''); }} />
                 </div>
               )}
             </>
           )}
 
-          <button type="submit" className="btn-primary-full">{tab === 'login' ? '로그인' : '가입하기'}</button>
+          {error && (
+            <div className="auth-error" style={{ color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: '10px', padding: '10px 12px', fontSize: '0.82rem', fontWeight: 600 }}>
+              {error}
+            </div>
+          )}
+
+          <button type="submit" className="btn-primary-full" disabled={submitting}>
+            {submitting ? '처리 중…' : (tab === 'login' ? '로그인' : '가입하기')}
+          </button>
         </form>
 
         <div className="auth-footer-link">
-          <span onClick={() => alert('비밀번호 재설정 링크가 학교 이메일로 전송됩니다.')}>비밀번호 찾기</span>
+          <span onClick={() => alert('비밀번호 재설정은 준비 중입니다. 학교 이메일로 문의해 주세요.')}>비밀번호 찾기</span>
         </div>
       </div>
     </div>

@@ -1,85 +1,99 @@
 import { useState, useRef, useEffect } from 'react';
-import { useApp } from '../../store/AppContext';
+import { createSession, sendMessage, submitSession } from '../../api/session';
+import { ApiError } from '../../api/client';
 
+// 실제 백엔드 대화 세션과 연동된 챗봇.
+// 흐름: createSession → sendMessage(Bedrock) 반복 → is_complete면 preview → 확인창 → submitSession
 export default function ChatModal({ onClose }) {
-  const { addComplaint, complaints } = useApp();
   const [messages, setMessages] = useState([
-    { sender: 'bot', text: '안녕하세요! 다듬이 AI에요.\n어떤 불편이 있으셨나요? 편하게 말씀해 주세요.' }
+    { sender: 'bot', text: '안녕하세요! 다듬이 AI에요.\n어떤 불편이 있으셨나요? 편하게 말씀해 주세요.' },
   ]);
   const [input, setInput] = useState('');
-  const [step, setStep] = useState('idle');
-  const [chatData, setChatData] = useState({ category: null, location: null, detail: null });
+  const [sessionId, setSessionId] = useState(null);
+  const [choices, setChoices] = useState(null);   // 현재 되묻기 선택지(칩)
+  const [preview, setPreview] = useState(null);    // 확정안(있으면 접수 버튼 노출)
+  const [busy, setBusy] = useState(false);         // 턴 진행 중 입력 잠금
   const scrollRef = useRef(null);
 
   useEffect(() => { scrollRef.current?.scrollTo(0, 99999); }, [messages]);
 
-  const addBotMsg = (text) => setMessages(prev => [...prev, { sender: 'bot', text }]);
+  // 세션은 처음 열 때 한 번 생성
+  useEffect(() => {
+    createSession()
+      .then((r) => setSessionId(r.session_id))
+      .catch(() => addBot('세션을 시작하지 못했습니다. 다시 시도해 주세요.'));
+  }, []);
 
-  const guessCategory = (text) => {
-    if (/에어컨|히터|냉방|난방|춥|더워/.test(text)) return '냉난방 / 설비';
-    if (/화장실|세면대|물|변기|누수|온수/.test(text)) return '배관 / 위생';
-    if (/프로젝터|빔|마이크|화면/.test(text)) return '기자재 / 영상';
-    if (/콘센트|전기|충전|조명|깜빡/.test(text)) return '전기 / 설비';
-    if (/열람실|자리|좌석|도서관/.test(text)) return '공간 / 편의';
-    return '시설 / 환경';
-  };
+  const addBot = (text, extra = {}) => setMessages(prev => [...prev, { sender: 'bot', text, ...extra }]);
+  const addUser = (text) => setMessages(prev => [...prev, { sender: 'user', text }]);
 
-  const handleSend = () => {
-    if (!input.trim()) return;
-    const text = input.trim();
-    setMessages(prev => [...prev, { sender: 'user', text }]);
+  const doSend = async (text) => {
+    if (!text.trim() || busy || !sessionId) return;
+    addUser(text);
     setInput('');
-    setTimeout(() => processStep(text), 400);
+    setChoices(null);
+    setBusy(true);
+    try {
+      const r = await sendMessage(sessionId, text);   // ← 실제 Bedrock 호출
+      if (r.is_complete) {
+        setPreview(r.preview);
+        const p = r.preview || {};
+        addBot(
+          `내용을 정리했어요.\n\n[카테고리] ${p.category}\n[위치] ${p.location}\n[제목] ${p.refined_title}\n\n${p.refined_body}\n\n아래 "정식 접수" 버튼으로 접수하거나, 고칠 점을 더 말씀해 주세요.`,
+        );
+      } else {
+        setPreview(null);
+        addBot(r.question || '조금 더 자세히 알려주세요.');
+        if (Array.isArray(r.choices) && r.choices.length) setChoices(r.choices);
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'CONVERSATION_STUCK') {
+        addBot('대화가 막혔어요. 처음부터 다시 작성하거나 직접 채워 주세요.');
+      } else if (err instanceof ApiError && err.code === 'BEDROCK_ERROR') {
+        addBot('AI 응답에 실패했어요. 잠시 후 다시 보내주세요. (대화는 저장돼 있어요)');
+      } else if (err instanceof ApiError) {
+        addBot(err.message || '요청을 처리하지 못했어요.');
+      } else {
+        addBot('서버에 연결하지 못했어요.');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const processStep = (text) => {
-    if (step === 'idle') {
-      const hasLoc = /관|층|호|도서관|화장실|실습실|열람실/.test(text);
-      const hasIssue = /고장|새요|소음|소리|안 나|꺼져|깜빡|춥|더워|물이|안 돼|막힘/.test(text);
-      if (hasLoc && hasIssue) {
-        setChatData({ category: guessCategory(text), location: text, detail: text });
-        setStep('confirm');
-        addBotMsg(`내용을 정리했어요.\n\n위치: ${text}\n내용: ${text}\n\n"접수" 또는 "수정"을 입력해 주세요.`);
-      } else if (hasLoc) {
-        setChatData(prev => ({ ...prev, location: text, category: guessCategory(text) }));
-        setStep('detail');
-        addBotMsg(`${text}, 확인했습니다.\n어떤 문제가 발생했나요?`);
+  // 정식 접수: 확인창 → submitSession
+  const handleSubmit = async () => {
+    if (!sessionId || busy) return;
+    if (!window.confirm('이대로 접수하시겠습니까? 접수 후에는 수정할 수 없습니다.')) return;
+    setBusy(true);
+    try {
+      const r = await submitSession(sessionId);   // { complaint_id, next_session_id }
+      addBot(`민원 #${r.complaint_id}이 접수되었습니다!\n게시판과 현황에서 확인하세요.`);
+      setPreview(null);
+      setChoices(null);
+      // 목록 갱신을 MainPage에 알리며 닫기
+      setTimeout(() => onClose(true), 900);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'DRAFT_NOT_COMPLETE') {
+        addBot('아직 확정안이 없어요. 위치·상황을 마저 알려주세요.');
+      } else if (err instanceof ApiError) {
+        addBot(err.message || '접수에 실패했어요.');
       } else {
-        setChatData(prev => ({ ...prev, detail: text, category: guessCategory(text) }));
-        setStep('location');
-        addBotMsg(`불편하셨겠어요. 해당 문제가 어느 건물·공간에서 발생했나요?`);
+        addBot('서버에 연결하지 못했어요.');
       }
-    } else if (step === 'location') {
-      setChatData(prev => ({ ...prev, location: text }));
-      setStep('confirm');
-      addBotMsg(`내용을 정리했어요.\n\n위치: ${text}\n내용: ${chatData.detail}\n\n"접수" 또는 "수정"을 입력해 주세요.`);
-    } else if (step === 'detail') {
-      setChatData(prev => ({ ...prev, detail: text }));
-      setStep('confirm');
-      addBotMsg(`내용을 정리했어요.\n\n위치: ${chatData.location}\n내용: ${text}\n\n"접수" 또는 "수정"을 입력해 주세요.`);
-    } else if (step === 'confirm') {
-      if (text.includes('접수') || text.includes('네') || text.includes('확인')) {
-        const newId = complaints.length > 0 ? Math.max(...complaints.map(c => c.id)) + 1 : 301;
-        addComplaint({ id: newId, category: chatData.category || '시설 / 환경', location: chatData.location || '교내', rawText: chatData.detail || '', title: `${chatData.location || '교내'} 시설 점검 요청`, summary: chatData.detail || '', timestamp: new Date().toLocaleDateString('ko-KR'), status: '미확인', isMine: true });
-        setStep('done');
-        addBotMsg(`민원 #${newId}이 접수되었습니다!\n현황 탭에서 처리 상태를 확인하세요.`);
-      } else {
-        setStep('idle');
-        setChatData({ category: null, location: null, detail: null });
-        addBotMsg(`처음부터 다시 말씀해 주세요.`);
-      }
-    } else {
-      addBotMsg(`새 민원을 작성하려면 대화를 닫고 다시 열어주세요.`);
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#FFF', zIndex: 200, display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#0F172A' }}><i className="bi bi-arrow-left"></i></button>
+        <button onClick={() => onClose(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#0F172A' }}><i className="bi bi-arrow-left"></i></button>
         <span style={{ fontWeight: 800, fontSize: '0.95rem' }}>새 민원 접수</span>
         <div style={{ width: '24px' }}></div>
       </div>
+
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', background: '#F8FAFC' }}>
         {messages.map((m, i) => (
           <div key={i} style={{ display: 'flex', justifyContent: m.sender === 'user' ? 'flex-end' : 'flex-start' }}>
@@ -88,12 +102,31 @@ export default function ChatModal({ onClose }) {
             </div>
           </div>
         ))}
+
+        {/* 되묻기 선택지(칩) — 누르면 그 문구를 그대로 전송 */}
+        {choices && !busy && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+            {choices.map((c, i) => (
+              <button key={i} onClick={() => doSend(c)} style={{ padding: '7px 12px', borderRadius: '9999px', border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#2563EB', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}>{c}</button>
+            ))}
+          </div>
+        )}
+
+        {/* 확정안이 있으면 정식 접수 버튼 */}
+        {preview && !busy && (
+          <button onClick={handleSubmit} style={{ marginTop: '6px', padding: '12px', borderRadius: '12px', background: '#2563EB', color: '#FFF', border: 'none', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer' }}>
+            정식 접수
+          </button>
+        )}
+
+        {busy && <div style={{ alignSelf: 'flex-start', color: '#94A3B8', fontSize: '0.82rem' }}>AI가 작성 중…</div>}
       </div>
+
       <div style={{ padding: '10px 16px', borderTop: '1px solid #F1F5F9', display: 'flex', gap: '8px', alignItems: 'center', background: '#FFF', flexShrink: 0 }}>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', background: '#F1F5F9', borderRadius: '9999px', padding: '0 14px', height: '42px' }}>
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} placeholder="메시지를 입력하세요" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: '0.85rem', color: '#0F172A' }} />
+          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && doSend(input)} placeholder={busy ? '응답을 기다리는 중…' : '메시지를 입력하세요'} disabled={busy} style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', fontSize: '0.85rem', color: '#0F172A' }} />
         </div>
-        <button onClick={handleSend} style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#2563EB', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0 }}><i className="bi bi-send-fill"></i></button>
+        <button onClick={() => doSend(input)} disabled={busy} style={{ width: '38px', height: '38px', borderRadius: '50%', background: busy ? '#93C5FD' : '#2563EB', color: '#fff', border: 'none', cursor: busy ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem', flexShrink: 0 }}><i className="bi bi-send-fill"></i></button>
       </div>
     </div>
   );

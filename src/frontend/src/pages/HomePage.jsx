@@ -1,9 +1,10 @@
 import { useApp } from '../store/AppContext';
+import { formatDate } from '../store/constants';
 import '../styles/home.css';
 
 export default function HomePage({ onOpenChat }) {
   const { user, complaints } = useApp();
-  const myList = complaints.filter(c => c.isMine);
+  const myList = complaints.filter(c => c.is_mine);
   const processing = myList.filter(c => c.status === '처리중').length;
   const done = myList.filter(c => c.status === '해결완료').length;
 
@@ -59,7 +60,7 @@ export default function HomePage({ onOpenChat }) {
               <span className="recent-row-title">{c.title}</span>
               <span className={`status-pill status-${c.status}`}>{c.status}</span>
             </div>
-            <div className="recent-row-meta">{c.location} &nbsp; {c.timestamp}</div>
+            <div className="recent-row-meta">{c.location} &nbsp; {formatDate(c.created_at)}</div>
           </div>
         ))}
       </div>

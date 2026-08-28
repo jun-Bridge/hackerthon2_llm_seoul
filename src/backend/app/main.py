@@ -24,11 +24,6 @@ app.include_router(admin.router, prefix="/api")
 # 2) 도메인 예외 → {"error": {"code","message"}} 전역 변환
 register_exception_handlers(app)
 
-# 3) 정적 프론트를 마지막에 mount (같은 서버가 서빙 → CORS 없음).
-#    SPA 라우팅을 쓰면 catch-all fallback이나 해시 라우팅 중 하나를 골라야 한다
-#    (docs/backend-design.md §2, dev-log "SPA 라우팅 fallback" 참조).
-# app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="static")
-
 
 @app.get("/health")
 def health():
@@ -58,3 +53,14 @@ def health():
         "redis": redis_ok,
         "bedrock": bedrock_ok,
     }
+
+
+# 3) 정적 프론트를 **맨 마지막에** mount (같은 서버가 8501에서 서빙 → CORS 없음).
+#    /api/* 라우터와 /health 를 위에서 먼저 등록했으므로 그 경로는 이 catch-all에 안 먹힌다.
+#    frontend/dist 가 있을 때만 mount (백엔드만 띄우는 개발 환경에서 죽지 않게).
+import os  # noqa: E402
+
+_FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.isdir(_FRONTEND_DIST):
+    # html=True → SPA 진입점(index.html) 서빙. 없는 경로는 index.html로 폴백.
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="static")

@@ -44,30 +44,34 @@ def create(
     return row["id"]
 
 
-def list(conn, school_id: int, status: str | None = None) -> list[dict]:
+def list(
+    conn, school_id: int, status: str | None = None, category: str | None = None
+) -> list[dict]:
     """게시판/관리자 목록. 항상 school_id로 스코프, status='철회'는 제외.
 
     Args:
-        status: 주면 그 상태만, None이면 철회 제외 전체.
+        status: 주면 그 상태만, None이면 상태 무관.
+        category: 주면 그 카테고리만, None이면 카테고리 무관 (게시판 카테고리 탭).
 
     Returns:
         [{id, category, location, refined_title, refined_body, status,
           created_at, confirmed_at, submitted_by_user_id}, ...]
         submitted_by_user_id는 서비스가 is_mine 계산에만 쓰고 응답에서 지운다.
     """
+    # 학교 격리 + 철회 제외는 항상. status/category는 주어질 때만 AND로 붙인다.
+    where = ["school_id = %s", "status != '철회'"]
+    params: list = [school_id]
     if status is not None:
-        # 명시 상태가 '철회'여도 조회 자체는 허용하지 않는다 — 철회는 어느 경로로도 안 보인다.
-        return conn.execute(
-            f"SELECT {_COLS} FROM complaints "
-            "WHERE school_id = %s AND status = %s AND status != '철회' "
-            "ORDER BY created_at DESC",
-            (school_id, status),
-        ).fetchall()
+        where.append("status = %s")
+        params.append(status)
+    if category is not None:
+        where.append("category = %s")
+        params.append(category)
     return conn.execute(
         f"SELECT {_COLS} FROM complaints "
-        "WHERE school_id = %s AND status != '철회' "
+        f"WHERE {' AND '.join(where)} "
         "ORDER BY created_at DESC",
-        (school_id,),
+        tuple(params),
     ).fetchall()
 
 

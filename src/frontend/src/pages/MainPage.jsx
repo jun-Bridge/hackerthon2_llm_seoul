@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import Header from '../components/common/Header';
 import BottomNav from '../components/common/BottomNav';
@@ -10,10 +10,25 @@ import ProfilePage from './ProfilePage';
 import ChatModal from '../components/chat/ChatModal';
 
 export default function MainPage() {
-  const { user } = useApp();
+  const { user, refreshComplaints, refreshStats } = useApp();
   const [tab, setTab] = useState('home');
   const [chatOpen, setChatOpen] = useState(false);
-  const isAdmin = user?.role === 'admin' || user?.role === 'staff';
+  const isAdmin = user?.role === 'admin';
+
+  // 로그인 직후 실제 게시판 목록을 백엔드에서 받아온다. 관리자면 통계도.
+  useEffect(() => {
+    refreshComplaints().catch(() => {});
+    if (isAdmin) refreshStats().catch(() => {});
+  }, [refreshComplaints, refreshStats, isAdmin]);
+
+  // 챗봇으로 새 민원 접수가 끝나면 목록을 갱신한다.
+  const handleChatClose = (submitted) => {
+    setChatOpen(false);
+    if (submitted) {
+      refreshComplaints().catch(() => {});
+      if (isAdmin) refreshStats().catch(() => {});
+    }
+  };
 
   const renderPage = () => {
     switch (tab) {
@@ -31,7 +46,7 @@ export default function MainPage() {
       {tab !== 'profile' && <Header onProfileClick={() => setTab('profile')} />}
       <div className="page-body">{renderPage()}</div>
       <BottomNav currentTab={tab} onTabChange={setTab} isAdmin={isAdmin} onFabClick={() => setChatOpen(true)} />
-      {chatOpen && <ChatModal onClose={() => setChatOpen(false)} />}
+      {chatOpen && <ChatModal onClose={handleChatClose} />}
     </div>
   );
 }
