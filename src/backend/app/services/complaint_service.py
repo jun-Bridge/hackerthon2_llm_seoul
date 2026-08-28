@@ -160,6 +160,8 @@ def add_comment(complaint_id: int, school_id: int, author_user_id: int, content:
     if not isinstance(content, str) or not content.strip():
         raise DomainError("코멘트 내용을 입력해 주세요.")
     normalized = content.strip()
+    if len(normalized) > 1000:
+        raise DomainError("코멘트는 1000자 이하여야 합니다.")  # api-contract 입력검증
     with pool.transaction() as conn:
         if complaint_repo.get(conn, complaint_id, school_id) is None:
             raise NotFoundError("민원을 찾을 수 없습니다.")

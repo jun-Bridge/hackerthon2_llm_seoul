@@ -11,6 +11,7 @@ repo 함수는 첫 인자로 conn을 받는다. Redis(session/)는 conn을 넘�
 import bcrypt
 
 from app.core.errors import (
+    DomainError,
     EmailTakenError,
     InvalidAdminCodeError,
     InvalidCredentialsError,
@@ -27,6 +28,14 @@ _DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing", bcrypt.gensalt()).deco
 
 
 # ── 비밀번호 해시 (auth_service 가 직접 담당) ─────────────────────
+
+def _validate_password(plain: str) -> None:
+    """비밀번호 규칙: 8자 이상 (api-contract 입력 검증). 위반 시 VALIDATION_FAILED(400).
+    신규 비밀번호(가입·변경)에만 적용한다 — 로그인/재확인은 기존 값을 대조만 한다.
+    """
+    if not isinstance(plain, str) or len(plain) < 8:
+        raise DomainError("비밀번호는 8자 이상이어야 합니다.")
+
 
 def _hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode()
@@ -69,6 +78,7 @@ def signup(email: str, password: str, admin_code: str | None) -> tuple[int, str]
         (user_id, role)
     """
     email = email.lower().strip()
+    _validate_password(password)  # 8자 규칙 — DB 접근 전에 거른다 (api-contract)
     domain = _domain_of(email)
 
     with pool.transaction() as conn:
@@ -156,6 +166,7 @@ def get_me(user_id: int) -> Me:
 
 def change_password(user_id: int, current_password: str, new_password: str) -> None:
     """현재 비밀번호 확인 후 변경. 불일치면 WrongPasswordError."""
+    _validate_password(new_password)  # 새 비밀번호도 8자 규칙 (api-contract)
     with pool.transaction() as conn:
         current_hash = user_repo.get_password_hash(conn, user_id)
         if current_hash is None or not _verify_password(current_password, current_hash):
