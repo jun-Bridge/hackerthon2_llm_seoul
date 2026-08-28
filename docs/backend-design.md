@@ -935,7 +935,7 @@ def _merge_consecutive(msgs):
 
 ```python
 # llm/tools.py
-CATEGORIES = ["냉난방 / 공조", "위생 / 배관", "전기 / 설비",
+CATEGORIES = ["냉난방 / 공조", "위생 / 배관", "전기 / 설비", "통신 / 인터넷",
               "영상 / 기자재", "공간 / 편의", "안전 / 보안", "기타"]
 
 ASK_FOLLOWUP = {

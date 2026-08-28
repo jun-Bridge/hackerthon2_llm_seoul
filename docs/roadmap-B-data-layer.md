@@ -41,7 +41,7 @@ app/session/chip_state.py      단계 캐시
 가장 아래 계층. 이게 돌아야 나머지 repo를 테스트할 수 있다.
 1. `init_db.py` — requirements.md의 7테이블 + bedrock_logs DDL을 실행. 재실행 안전(`IF NOT EXISTS`).
 2. `app/repo/pool.py` — `get_pool()`(psycopg_pool), `transaction()`(with 컨텍스트, commit/rollback).
-3. `seed_schools.py` — 학교 2개+ (도메인·별칭·admin_codes). `ON CONFLICT`로 재실행 안전.
+3. `seed_schools.py` — 서비스 학교 5곳(조선대·순천대·군산대·전남대·전북대, 도메인·별칭·admin_codes). `ON CONFLICT`로 재실행 안전 + 삽입 전 `validate_seed()` 무결성 검사.
 
 **완료 기준**: `python init_db.py && python seed_schools.py`가 에러 없이 돌고, psql로 테이블·시드 확인.
 
@@ -105,7 +105,7 @@ A·C 호출부가 깨지지 않는다.
 |---|---|---|
 | 1 | `init_db.py` | requirements.md 정본 스키마 8테이블 + 인덱스, `IF NOT EXISTS`로 재실행 안전 |
 | 1 | `app/repo/pool.py` | psycopg3 `ConnectionPool`(dict_row), `transaction()` 컨텍스트, `close_pool()` |
-| 1 | `seed_schools.py` | 학교 3곳 + admin_codes. `ON CONFLICT(email_domain)`로 재실행 안전 |
+| 1 | `seed_schools.py` | 서비스 학교 5곳(조선대 chosun.ac.kr·순천대 sunchon.ac.kr·군산대 kunsan.ac.kr·전남대 jnu.ac.kr·전북대 jbnu.ac.kr) + admin_codes. `ON CONFLICT`·`validate_seed()` |
 | 2 | `school_repo.py` | `find_by_domain` / `list_all`(별칭) / `verify_admin_code` |
 | 2 | `user_repo.py` | `create`(UNIQUE 위반 전파) / `find_by_email` / `get_password_hash` / `change_password` / `delete` |
 | 3 | `session/__init__.py` | 프로세스 공용 Redis 클라이언트(`get_redis`, decode_responses) |
