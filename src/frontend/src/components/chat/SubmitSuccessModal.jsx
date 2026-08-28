@@ -11,12 +11,10 @@ export default function SubmitSuccessModal({ onConfirm }) {
         boxShadow: '0 20px 40px rgba(0,0,0,0.12)'
       }}>
         <div style={{
-          width: '56px', height: '56px', borderRadius: '50%',
-          background: '#2563EB', color: '#fff', display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 16px', fontSize: '1.6rem'
+          width: '80px', height: '80px',
+          margin: '0 auto 16px',
         }}>
-          <i className="bi bi-check-lg"></i>
+          <img src="/heart.png" alt="다듬이" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         </div>
         <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', marginBottom: '16px' }}>
           익명 민원이 접수되었어요

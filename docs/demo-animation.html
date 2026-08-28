@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>다듬이 - 서비스 데모</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Pretendard Variable", sans-serif;
+      background: linear-gradient(180deg, #BFDBFE 0%, #EFF6FF 40%, #FFFFFF 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .demo-container {
+      max-width: 420px;
+      width: 100%;
+      height: 90vh;
+      max-height: 800px;
+      background: #FFFFFF;
+      border-radius: 24px;
+      box-shadow: 0 8px 60px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .step { display: none; flex-direction: column; align-items: center; gap: 16px; text-align: center; width: 100%; animation: appear 0.4s cubic-bezier(0.16,1,0.3,1); }
+    .step.active { display: flex; }
+
+    @keyframes appear { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes typing { from { width: 0; } to { width: 100%; } }
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+    @keyframes cardUp { from { opacity:0; transform:translateY(30px); } to { opacity:1; transform:translateY(0); } }
+
+    .char-img { width: 140px; height: 140px; object-fit: contain; animation: float 2s ease-in-out infinite; }
+    .char-img.pulse { animation: pulse 0.6s ease 3; }
+
+    .msg-text { font-size: 1.2rem; font-weight: 700; color: #0F172A; line-height: 1.5; }
+    .sub-text { font-size: 0.88rem; color: #64748B; }
+
+    .typing-box {
+      background: #F1F5F9; border-radius: 14px; padding: 14px 18px;
+      font-size: 0.95rem; color: #0F172A; font-weight: 600;
+      width: 100%; text-align: left; overflow: hidden; white-space: nowrap;
+      border-left: 3px solid #2563EB;
+    }
+    .typing-box span { display: inline-block; overflow: hidden; white-space: nowrap; animation: typing 1.5s steps(20) forwards; width: 0; }
+
+    .doc-card {
+      background: #FFFFFF; border: 1.5px solid #E2E8F0; border-radius: 16px;
+      padding: 20px; width: 100%; text-align: left;
+      animation: cardUp 0.5s cubic-bezier(0.16,1,0.3,1);
+    }
+    .doc-card h3 { font-size: 0.85rem; color: #94A3B8; margin-bottom: 8px; font-weight: 600; }
+    .doc-card p { font-size: 0.9rem; color: #0F172A; line-height: 1.5; font-weight: 600; }
+    .doc-card .badge { display: inline-block; background: #EFF6FF; color: #2563EB; padding: 3px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; margin-bottom: 8px; }
+
+    .status-change { display: flex; gap: 8px; align-items: center; justify-content: center; }
+    .status-chip { padding: 6px 14px; border-radius: 9999px; font-size: 0.82rem; font-weight: 700; transition: all 0.3s; }
+    .status-chip.before { background: #FEF9C3; color: #854D0E; }
+    .status-chip.after { background: #DCFCE7; color: #15803D; }
+    .arrow { font-size: 1.2rem; color: #94A3B8; }
+
+    .next-btn {
+      margin-top: 24px; padding: 12px 32px; border-radius: 12px;
+      background: #2563EB; color: #FFF; font-size: 0.9rem; font-weight: 700;
+      border: none; cursor: pointer; box-shadow: 0 4px 14px rgba(37,99,235,0.2);
+      transition: all 0.2s;
+    }
+    .next-btn:hover { background: #1D4ED8; transform: scale(1.02); }
+    .next-btn:active { transform: scale(0.98); }
+
+    .step-indicator { position: absolute; bottom: 20px; display: flex; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #E2E8F0; transition: background 0.3s; }
+    .dot.active { background: #2563EB; }
+  </style>
+</head>
+<body>
+
+<div class="demo-container">
+
+  <!-- STEP 1: 캐릭터 등장 -->
+  <div class="step active" id="step-1">
+    <img src="../src/frontend/public/cheer.png" class="char-img" alt="다듬이" />
+    <div class="msg-text">안녕하세요! 다듬이예요 👋</div>
+    <div class="sub-text">캠퍼스 시설 민원을 AI로 깔끔하게 정리해드려요</div>
+    <button class="next-btn" onclick="goStep(2)">시작하기</button>
+  </div>
+
+  <!-- STEP 2: 입력 (자동 타이핑) -->
+  <div class="step" id="step-2">
+    <img src="../src/frontend/public/typing.png" class="char-img" alt="다듬이 듣는 중" />
+    <div class="msg-text">학생이 불편을 말하면...</div>
+    <div class="typing-box"><span>히터 고장났어요 너무 추워요 ㅠㅠ</span></div>
+    <div class="sub-text">자연어로 편하게, 형식 몰라도 OK</div>
+    <button class="next-btn" onclick="goStep(3)">다음</button>
+  </div>
+
+  <!-- STEP 3: 변환 중 -->
+  <div class="step" id="step-3">
+    <img src="../src/frontend/public/write.png" class="char-img pulse" alt="다듬이 정리 중" />
+    <div class="msg-text">AI가 공문서로 정리 중이에요...</div>
+    <div class="sub-text">카테고리 분류 + 위치 파악 + 격식 변환</div>
+    <button class="next-btn" onclick="goStep(4)">다음</button>
+  </div>
+
+  <!-- STEP 4: 완성 -->
+  <div class="step" id="step-4">
+    <img src="../src/frontend/public/cheer.png" class="char-img" alt="다듬이 짠!" />
+    <div class="msg-text">짠! 완성됐어요 ✨</div>
+    <div class="doc-card">
+      <span class="badge">냉난방 / 공조</span>
+      <h3>민원 공문서</h3>
+      <p>공학관 3층 305호 강의실 히터 미작동으로 인한<br/>실내 온도 저하 점검 및 조치 요청</p>
+    </div>
+    <button class="next-btn" onclick="goStep(5)">접수하기</button>
+  </div>
+
+  <!-- STEP 5: 제출 완료 -->
+  <div class="step" id="step-5">
+    <img src="../src/frontend/public/heart.png" class="char-img" alt="다듬이 뿅" />
+    <div class="msg-text">익명으로 접수됐어요 💙</div>
+    <div class="sub-text">학번·이름 없이, 안전하게 전달 완료!</div>
+    <button class="next-btn" onclick="goStep(6)">관리자 확인</button>
+  </div>
+
+  <!-- STEP 6: 관리자 처리 -->
+  <div class="step" id="step-6">
+    <img src="../src/frontend/public/cheer.png" class="char-img" alt="다듬이 웃음" />
+    <div class="msg-text">관리자가 처리했어요!</div>
+    <div class="status-change">
+      <span class="status-chip before">처리중</span>
+      <span class="arrow">→</span>
+      <span class="status-chip after">해결완료</span>
+    </div>
+    <div class="sub-text">실시간으로 처리 현황을 확인할 수 있어요</div>
+    <button class="next-btn" onclick="goStep(1)">처음으로</button>
+  </div>
+
+  <!-- 하단 점 인디케이터 -->
+  <div class="step-indicator">
+    <span class="dot active" id="dot-1"></span>
+    <span class="dot" id="dot-2"></span>
+    <span class="dot" id="dot-3"></span>
+    <span class="dot" id="dot-4"></span>
+    <span class="dot" id="dot-5"></span>
+    <span class="dot" id="dot-6"></span>
+  </div>
+</div>
+
+<script>
+  let current = 1;
+  function goStep(n) {
+    document.getElementById(`step-${current}`).classList.remove('active');
+    document.getElementById(`dot-${current}`).classList.remove('active');
+    current = n;
+    document.getElementById(`step-${current}`).classList.add('active');
+    document.getElementById(`dot-${current}`).classList.add('active');
+  }
+</script>
+
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { useToast } from '../components/common/Toast';
+import { logout } from '../api/auth';
 
 export default function ProfilePage() {
   const { user, setUser } = useApp();
@@ -82,7 +83,7 @@ export default function ProfilePage() {
       </div>
 
       {/* 로그아웃 */}
-      <div style={{ margin: '0 16px', padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }} onClick={() => setUser(null)}>
+      <div style={{ margin: '0 16px', padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }} onClick={() => { logout().catch(() => {}); setUser(null); window.location.reload(); }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <i className="bi bi-box-arrow-left" style={{ color: '#EF4444', fontSize: '1rem' }}></i>
           <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#EF4444' }}>로그아웃</span>
