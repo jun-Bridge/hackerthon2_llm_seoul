@@ -2,7 +2,7 @@
 export default function SubmitSuccessModal({ onConfirm }) {
   return (
     <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+      position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)',
       zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
     }}>
       <div style={{

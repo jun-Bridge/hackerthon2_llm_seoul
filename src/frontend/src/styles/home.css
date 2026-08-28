@@ -1,6 +1,6 @@
-.home-page { display: flex; flex-direction: column; gap: 12px; }
-.greeting { font-size: 1.1rem; font-weight: 500; color: #0F172A; }
-.greeting-name { font-weight: 800; }
+.home-page { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
+.greeting { font-size: 1rem; font-weight: 500; color: #0F172A; line-height: 1.6; }
+.greeting-name { font-size: 1.3rem; font-weight: 800; display: block; margin-top: 2px; }
 .input-trigger { display: flex; justify-content: space-between; align-items: center; background: #FFF; border-radius: 9999px; padding: 12px 18px; border: 1px solid #E2E8F0; box-shadow: 0 2px 8px rgba(15,23,42,0.02); cursor: pointer; font-size: 0.86rem; color: #94A3B8; }
 .anon-banner { display: flex; align-items: center; background: #EBF2FF; border-radius: 14px; padding: 12px 16px; cursor: pointer; border: 1px solid rgba(226,232,240,0.5); }
 .anon-title { font-size: 0.88rem; font-weight: 800; color: #1E40AF; margin-bottom: 2px; }

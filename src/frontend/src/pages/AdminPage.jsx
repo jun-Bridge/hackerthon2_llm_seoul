@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import AdminDetailModal from '../components/common/AdminDetailModal';
+import PageHeader from '../components/common/PageHeader';
 
 export default function AdminPage() {
   const { complaints, changeStatus } = useApp();
@@ -22,11 +23,12 @@ export default function AdminPage() {
   const selectedComplaint = complaints.find(c => c.id === selectedId);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>관리자 페이지</h2>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', background: '#FFFFFF', margin: '-10px -16px -80px', paddingBottom: '80px' }}>
+      <PageHeader title="관리자 페이지" />
+      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
       {/* 통계 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid #E2E8F0', borderRadius: '10px', overflow: 'hidden' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid #E2E8F0', borderRadius: '10px', overflow: 'hidden', background: '#FFFFFF' }}>
         {[
           { l: '전체', v: complaints.length },
           { l: '처리중', v: proc },
@@ -62,6 +64,7 @@ export default function AdminPage() {
       {selectedComplaint && (
         <AdminDetailModal complaint={selectedComplaint} onClose={() => setSelectedId(null)} />
       )}
+      </div>
     </div>
   );
 }

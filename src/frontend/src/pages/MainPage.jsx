@@ -32,7 +32,7 @@ export default function MainPage() {
 
   const renderPage = () => {
     switch (tab) {
-      case 'home': return <HomePage onOpenChat={() => setChatOpen(true)} />;
+      case 'home': return <HomePage onOpenChat={() => setChatOpen(true)} onTabChange={setTab} />;
       case 'status': return <StatusPage />;
       case 'board': return <BoardPage />;
       case 'admin': return <AdminPage />;
@@ -42,9 +42,9 @@ export default function MainPage() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'transparent' }}>
-      {tab !== 'profile' && <Header onProfileClick={() => setTab('profile')} />}
-      <div className="page-body">{renderPage()}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%)' }}>
+      {tab === 'home' && <Header onProfileClick={() => setTab('profile')} />}
+      <div className="page-body" style={tab === 'profile' || tab === 'admin' || tab === 'board' || tab === 'status' ? { background: '#FFFFFF', padding: tab === 'profile' ? 0 : undefined } : {}}>{renderPage()}</div>
       <BottomNav currentTab={tab} onTabChange={setTab} isAdmin={isAdmin} onFabClick={() => setChatOpen(true)} />
       {chatOpen && <ChatModal onClose={handleChatClose} />}
     </div>

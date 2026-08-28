@@ -1,11 +1,15 @@
-.app-header { padding: 14px 20px 6px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+.app-header { padding: 14px 20px 6px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; background: transparent; }
 .header-left { display: flex; align-items: center; gap: 8px; }
 .header-brand { font-size: 1.2rem; font-weight: 800; color: #2563EB; letter-spacing: -0.4px; }
 .header-right { display: flex; align-items: center; gap: 12px; }
 .header-icon-btn { background: none; border: none; font-size: 1.25rem; color: #0F172A; cursor: pointer; display: flex; align-items: center; }
 .header-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #E2E8F0; background: #FFF; color: #0F172A; display: flex; align-items: center; justify-content: center; font-size: 1rem; cursor: pointer; }
 
-.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; height: 64px; background: #FFF; border-top: 1px solid #F1F5F9; display: flex; align-items: center; justify-content: space-around; z-index: 50; padding-bottom: env(safe-area-inset-bottom, 0); }
+.bottom-nav { position: absolute; bottom: 0; left: 0; right: 0; height: 64px; background: #FFF; border-top: 1px solid #F1F5F9; display: flex; align-items: center; justify-content: space-around; z-index: 50; padding-bottom: env(safe-area-inset-bottom, 0); }
+
+@media (min-width: 768px) {
+  .bottom-nav { border-radius: 0 0 24px 24px; }
+}
 .tab-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; border: none; background: none; color: #94A3B8; font-size: 0.68rem; font-weight: 600; cursor: pointer; padding: 4px 0; }
 .tab-btn i { font-size: 1.2rem; }
 .tab-btn.active { color: #2563EB; }

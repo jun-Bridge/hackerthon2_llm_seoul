@@ -29,7 +29,9 @@ export default function App() {
   return (
     <AppProvider>
       <ToastProvider>
-        <AppRoot />
+        <div className="app-frame">
+          <AppRoot />
+        </div>
       </ToastProvider>
     </AppProvider>
   );

@@ -26,7 +26,9 @@ export default function ChatModal({ onClose }) {
   const [isTyping, setIsTyping] = useState(false);
   const [showConfirmCard, setShowConfirmCard] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null);
   const scrollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => { scrollRef.current?.scrollTo(0, 99999); }, [messages, isTyping, showConfirmCard]);
 
@@ -47,11 +49,23 @@ export default function ChatModal({ onClose }) {
     }, 500);
   };
 
+  const handleImageSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setPendingImage(reader.result);
+    reader.readAsDataURL(file);
+    e.target.value = ''; // 같은 파일 재선택 가능하게
+  };
+
   const handleSend = () => {
-    if (!input.trim()) return;
+    if (!input.trim() && !pendingImage) return;
     const text = input.trim();
-    setMessages(prev => [...prev, { sender: 'user', text, chips: [] }]);
+    // 메시지에 이미지 미리보기 포함
+    const msg = { sender: 'user', text: text || '(사진 첨부)', chips: [], image: pendingImage || null };
+    setMessages(prev => [...prev, msg]);
     setInput('');
+    setPendingImage(null);
     processStep(text);
   };
 
@@ -70,8 +84,7 @@ export default function ChatModal({ onClose }) {
         setChatData({ category: cat, location: text, detail: text });
         setStepHistory(prev => [...prev, 'idle']);
         setStep('confirm');
-        addBotMsg('내용을 정리했어요. 아래 내용을 확인해 주세요.');
-        setTimeout(() => setShowConfirmCard(true), 600);
+        setTimeout(() => setShowConfirmCard(true), 300);
       } else if (hasLoc) {
         setChatData(prev => ({ ...prev, location: text, category: cat }));
         setStepHistory(prev => [...prev, 'idle']);
@@ -88,14 +101,12 @@ export default function ChatModal({ onClose }) {
       setChatData(prev => ({ ...prev, location: text }));
       setStepHistory(prev => [...prev, 'location']);
       setStep('confirm');
-      addBotMsg('내용을 정리했어요. 아래 내용을 확인해 주세요.');
-      setTimeout(() => setShowConfirmCard(true), 600);
+      setTimeout(() => setShowConfirmCard(true), 300);
     } else if (step === 'detail') {
       setChatData(prev => ({ ...prev, detail: text }));
       setStepHistory(prev => [...prev, 'detail']);
       setStep('confirm');
-      addBotMsg('내용을 정리했어요. 아래 내용을 확인해 주세요.');
-      setTimeout(() => setShowConfirmCard(true), 600);
+      setTimeout(() => setShowConfirmCard(true), 300);
     }
   };
 
@@ -145,7 +156,7 @@ export default function ChatModal({ onClose }) {
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: '#FFF', zIndex: 200, display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'absolute', inset: 0, background: '#FFF', zIndex: 200, display: 'flex', flexDirection: 'column' }}>
       {/* 헤더 */}
       <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
         <button onClick={() => onClose(false)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#0F172A' }}>
@@ -158,22 +169,31 @@ export default function ChatModal({ onClose }) {
       </div>
 
       {/* 메시지 */}
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', background: 'linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%)' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', background: 'linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%)' }}>
         {messages.map((m, i) => (
           <div key={i}>
-            <div style={{ display: 'flex', justifyContent: m.sender === 'user' ? 'flex-end' : 'flex-start' }}>
+            <div style={{ display: 'flex', justifyContent: m.sender === 'user' ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-start' }}>
+              {/* 봇 아바타 */}
+              {m.sender === 'bot' && (
+                <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#EFF6FF', border: '1px solid #DBEAFE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <iconify-icon icon="fluent-emoji:robot" width="18"></iconify-icon>
+                </div>
+              )}
               <div style={{
-                maxWidth: '80%', padding: '10px 14px', borderRadius: '14px',
+                maxWidth: '75%', padding: '10px 14px', borderRadius: '14px',
                 background: m.sender === 'user' ? '#2563EB' : '#FFFFFF',
                 color: m.sender === 'user' ? '#FFF' : '#0F172A',
                 border: m.sender === 'bot' ? '1px solid #E2E8F0' : 'none',
-                fontSize: '0.88rem', lineHeight: '1.5', whiteSpace: 'pre-wrap'
+                borderTopLeftRadius: m.sender === 'bot' ? '4px' : '14px',
+                borderTopRightRadius: m.sender === 'user' ? '4px' : '14px',
+                fontSize: '0.88rem', lineHeight: '1.55', whiteSpace: 'pre-wrap'
               }}>
+                {m.image && <img src={m.image} alt="첨부" style={{ width: '100%', maxWidth: '180px', borderRadius: '8px', marginBottom: m.text ? '6px' : '0' }} />}
                 {m.text}
               </div>
             </div>
             {m.sender === 'bot' && m.chips && m.chips.length > 0 && (
-              <div className="chip-row" style={{ paddingLeft: '4px' }}>
+              <div className="chip-row" style={{ paddingLeft: '38px', marginTop: '6px', display: 'none' }}>
                 {m.chips.map((c, j) => (
                   <button key={j} className="quick-chip" onClick={() => handleChipClick(c)}>{c}</button>
                 ))}
@@ -191,36 +211,74 @@ export default function ChatModal({ onClose }) {
           </div>
         )}
 
-        {/* 민원 요약 카드 (confirm 단계) */}
+        {/* 민원 요약 카드 (봇 버블 안 스타일) */}
         {showConfirmCard && (
-          <div style={{ background: '#FFF', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '16px', marginTop: '8px' }}>
-            <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#0F172A', marginBottom: '12px' }}>민원 내용 요약</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.84rem' }}>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <span style={{ color: '#94A3B8', fontWeight: 600, minWidth: '52px' }}>카테고리</span>
-                <span style={{ color: '#2563EB', fontWeight: 700 }}>{chatData.category || '-'}</span>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+            {/* 봇 아바타 */}
+            <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#EFF6FF', border: '1px solid #DBEAFE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <iconify-icon icon="fluent-emoji:robot" width="18"></iconify-icon>
+            </div>
+            <div style={{ flex: 1 }}>
+              {/* 봇 텍스트 */}
+              <div style={{ padding: '10px 14px', borderRadius: '14px', borderTopLeftRadius: '4px', background: '#FFFFFF', border: '1px solid #E2E8F0', fontSize: '0.88rem', lineHeight: '1.55', color: '#0F172A', marginBottom: '8px' }}>
+                네, 내용을 정리했어요. 아래 내용을 확인해 주세요!
               </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <span style={{ color: '#94A3B8', fontWeight: 600, minWidth: '52px' }}>위치</span>
-                <span style={{ color: '#0F172A' }}>{chatData.location || '-'}</span>
-              </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <span style={{ color: '#94A3B8', fontWeight: 600, minWidth: '52px' }}>내용</span>
-                <span style={{ color: '#0F172A', lineHeight: '1.4' }}>{chatData.detail || '-'}</span>
+              {/* 요약 카드 */}
+              <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '16px', padding: '20px', marginBottom: '8px' }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#0F172A', marginBottom: '16px' }}>민원 내용 요약</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.88rem' }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <i className="bi bi-tag" style={{ color: '#94A3B8', fontSize: '0.9rem', marginTop: '2px' }}></i>
+                    <span style={{ color: '#94A3B8', fontWeight: 600, minWidth: '56px' }}>카테고리</span>
+                    <span style={{ color: '#2563EB', fontWeight: 700 }}>{chatData.category || '○'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <i className="bi bi-geo-alt" style={{ color: '#94A3B8', fontSize: '0.9rem', marginTop: '2px' }}></i>
+                    <span style={{ color: '#94A3B8', fontWeight: 600, minWidth: '56px' }}>위치</span>
+                    <span style={{ color: '#0F172A' }}>{chatData.location || '○'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                    <i className="bi bi-file-text" style={{ color: '#94A3B8', fontSize: '0.9rem', marginTop: '2px' }}></i>
+                    <span style={{ color: '#94A3B8', fontWeight: 600, minWidth: '56px' }}>내용 요약</span>
+                    <span style={{ color: '#0F172A', lineHeight: '1.5' }}>{chatData.detail || '○'}</span>
+                  </div>
+                </div>
+                <button onClick={handleSubmit} style={{ width: '100%', height: '48px', borderRadius: '12px', background: '#4F5FE8', color: '#FFF', fontSize: '0.95rem', fontWeight: 700, border: 'none', cursor: 'pointer', marginTop: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                  민원 접수하기 →
+                </button>
+                <div onClick={handleGoBack} style={{ textAlign: 'center', marginTop: '12px', fontSize: '0.82rem', fontWeight: 600, color: '#94A3B8', cursor: 'pointer' }}>
+                  ← 수정하기
+                </div>
               </div>
             </div>
-            <button onClick={handleSubmit} style={{ width: '100%', height: '44px', borderRadius: '9999px', background: '#2563EB', color: '#FFF', fontSize: '0.9rem', fontWeight: 700, border: 'none', cursor: 'pointer', marginTop: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              민원 접수하기 <i className="bi bi-arrow-right"></i>
-            </button>
-            <button onClick={handleGoBack} style={{ width: '100%', marginTop: '8px', padding: '8px', background: 'none', border: '1px solid #E2E8F0', borderRadius: '9999px', fontSize: '0.8rem', fontWeight: 600, color: '#64748B', cursor: 'pointer' }}>
-              수정하기
-            </button>
           </div>
         )}
       </div>
 
+      {/* 이미지 미리보기 */}
+      {pendingImage && (
+        <div style={{ padding: '8px 16px', borderTop: '1px solid #F1F5F9', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <img src={pendingImage} alt="첨부" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #E2E8F0' }} />
+          <span style={{ fontSize: '0.78rem', color: '#64748B' }}>사진 1장 첨부됨</span>
+          <button onClick={() => setPendingImage(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#94A3B8', fontSize: '1rem', cursor: 'pointer' }}>
+            <i className="bi bi-x"></i>
+          </button>
+        </div>
+      )}
+
       {/* 입력 */}
       <div style={{ padding: '10px 16px', borderTop: '1px solid #F1F5F9', display: 'flex', gap: '8px', alignItems: 'center', background: '#FFF', flexShrink: 0 }}>
+        {/* + 버튼 (이미지 첨부) */}
+        <button onClick={() => fileInputRef.current?.click()} style={{ width: '38px', height: '38px', borderRadius: '50%', background: '#F1F5F9', color: '#64748B', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0 }}>
+          <i className="bi bi-plus-lg"></i>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={handleImageSelect}
+        />
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', background: '#F1F5F9', borderRadius: '9999px', padding: '0 14px', height: '42px' }}>
           <input
             type="text" value={input}
