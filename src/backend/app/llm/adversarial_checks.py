@@ -25,6 +25,7 @@ _EXPECTED_CATEGORIES = (
     "냉난방 / 공조",
     "위생 / 배관",
     "전기 / 설비",
+    "통신 / 인터넷",  # 사용자가 추가한 카테고리
     "영상 / 기자재",
     "공간 / 편의",
     "안전 / 보안",
@@ -1193,8 +1194,9 @@ def _check_phase4_bedrock_invocation() -> int:
         created_client = _create_bedrock_client()
     check(created_client is boto_client_sentinel, "Bedrock client 반환값 불일치")
     check(
-        captured_client_args == [(('bedrock-runtime',), {})],
-        "boto3.client에 region 또는 credential 인자가 전달됨",
+        captured_client_args
+        == [(("bedrock-runtime",), {"region_name": "ap-northeast-2"})],
+        "boto3.client에 서울 리전이 정확히 명시되지 않았거나 credential 인자가 전달됨",
     )
 
     sensitive = "학생 민원 원문 SECRET-REQUEST"
@@ -2147,15 +2149,19 @@ def _check_phase6_full_integration() -> int:
 
     client_source = inspect.getsource(client_module)
     check(
-        'boto3.client("bedrock-runtime")' in client_source,
-        "Bedrock Runtime client 생성 계약 누락",
+        'boto3.client("bedrock-runtime", region_name=_BEDROCK_REGION)'
+        in client_source,
+        "Bedrock Runtime 서울 리전 명시 계약 누락",
+    )
+    check(
+        '_BEDROCK_REGION = "ap-northeast-2"' in client_source,
+        "Bedrock Runtime 리전 값 불일치",
     )
     for forbidden in (
         "os.environ",
         "aws_access_key_id",
         "aws_secret_access_key",
         "secret_access_key",
-        "region_name=",
         "api_key",
     ):
         check(forbidden not in client_source, f"금지된 설정 코드 발견: {forbidden}")

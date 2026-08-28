@@ -3,7 +3,7 @@
 호출하는 쪽: app/services/session_service.py
 정본: docs/backend-design.md §8.
 
-boto3.client('bedrock-runtime') — region_name 없이. Instance Profile이 자동 처리.
+boto3.client('bedrock-runtime', region_name='ap-northeast-2') — 서울 리전을 명시한다.
 모델 id는 settings.llm_model_id (global. 프로필).
 """
 from collections.abc import Callable, Mapping
@@ -27,6 +27,7 @@ from app.llm.validation import (
 
 
 _ANTHROPIC_VERSION = "bedrock-2023-05-31"
+_BEDROCK_REGION = "ap-northeast-2"
 _REFINE_MAX_TOKENS = 1024
 _COMPACT_MAX_TOKENS = 1024
 _MAX_COMPACT_RESPONSE_CHARS = 12_000
@@ -336,10 +337,10 @@ def _parse_compact_response(
 
 
 def _create_bedrock_client() -> Any:
-    """Instance Profile과 인스턴스 리전을 사용하는 Bedrock Runtime client."""
+    """서울 리전을 명시하고 AWS 기본 자격증명 체인을 사용하는 Runtime client."""
     import boto3
 
-    return boto3.client("bedrock-runtime")
+    return boto3.client("bedrock-runtime", region_name=_BEDROCK_REGION)
 
 
 def _aws_error_code(exc: Exception) -> str | None:

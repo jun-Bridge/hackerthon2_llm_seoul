@@ -16,7 +16,7 @@ Bedrock 요청 조립, 호출, 응답 파싱과 LLM 입출력 검증은 이 디�
 | `client.py` | `refine()`, `compact()`, Anthropic 요청 조립, Bedrock 호출·재시도, 응답 파싱 |
 | `types.py` | 서비스 경계 타입 `Usage`, `RefineResult`, `CompactResult`와 생성 후 불변성 |
 | `validation.py` | 신뢰할 수 없는 입력·도구 payload·compact 결과의 런타임 검증 |
-| `choices.py` | 고정 카테고리 7종, 카테고리별 칩, 결정론적 `merge_choices()` |
+| `choices.py` | 고정 카테고리 8종, 카테고리별 칩, 결정론적 `merge_choices()` |
 | `tools.py` | `ask_followup`, `classify_and_refine_complaint` JSON Schema |
 | `prompts.py` | 정제·누적 압축 시스템 프롬프트와 인젝션 방어 지시 |
 | `adversarial_checks.py` | 외부 서비스 없이 실행하는 계약·공격·통합 회귀 검사 |
@@ -85,12 +85,13 @@ summary = compact(prev_context: str | None, messages: list[dict])
 
 ## 선택지 계층
 
-고정 taxonomy는 다음 7종이며 도구 enum과 런타임 validator가 같은 목록을 사용한다.
+고정 taxonomy는 다음 8종이며 도구 enum과 런타임 validator가 같은 목록을 사용한다.
 
 ```text
 냉난방 / 공조
 위생 / 배관
 전기 / 설비
+통신 / 인터넷
 영상 / 기자재
 공간 / 편의
 안전 / 보안
@@ -99,7 +100,7 @@ summary = compact(prev_context: str | None, messages: list[dict])
 
 `merge_choices()` 규칙:
 
-- `missing == "category"`: 모델 선택지를 무시하고 고정 7종의 새 목록만 반환한다.
+- `missing == "category"`: 모델 선택지를 무시하고 고정 8종의 새 목록만 반환한다.
 - 그 외: 알려진 category의 고정 칩 → 모델 선택지 → `직접 입력` 순서다.
 - 공백·빈 값과 중복을 제거하고 최초 등장 순서를 유지한다.
 - `직접 입력`은 마지막에 정확히 한 번만 둔다.
@@ -108,16 +109,16 @@ summary = compact(prev_context: str | None, messages: list[dict])
 ## Bedrock 호출 규칙
 
 ```python
-boto3.client("bedrock-runtime")
+boto3.client("bedrock-runtime", region_name="ap-northeast-2")
 ```
 
-1. `region_name`을 전달하지 않는다. EC2 Instance Profile이 할당 리전을 제공한다.
+1. Bedrock Runtime 호출 리전은 서울 리전(`ap-northeast-2`)으로 명시한다.
 2. API 키를 사용하지 않는다. AWS 표준 자격증명 체인과 IAM Role을 사용한다.
 3. access key·secret key를 코드나 요청에 넣지 않는다.
 4. 모델 ID는 `get_settings().llm_model_id`에서 읽는다. 기본값은 `global.anthropic.claude-sonnet-5`다.
 5. Anthropic 버전은 `bedrock-2023-05-31`, 최대 출력 토큰은 정제·압축 모두 1,024다.
 
-실행 환경에는 `boto3`와 `pydantic-settings`가 설치되어 있어야 한다. 저장소의 `connectionTest/bedrock_simple_test.py`는 리전 미지정·global 추론 프로필 제약을 실제 환경에서 확인한 참고 코드다.
+실행 환경에는 `boto3`와 `pydantic-settings`가 설치되어 있어야 한다. 저장소의 `connectionTest/bedrock_simple_test.py`는 Bedrock 연결을 실제 환경에서 확인하는 참고 코드다.
 
 ## 오류와 재시도
 
@@ -151,9 +152,9 @@ python -m compileall -q app/llm
 현재 기대 출력:
 
 ```text
-Phase 0~6 adversarial checks passed: 352
+Phase 0~6 adversarial checks passed: 356
 ```
 
-검사 범위에는 schema/taxonomy 우회, 손상 JSON, 첫 tool 선택, 결과·입력 불변성, AccessDenied 무재시도, Throttling 호출 상한, compact 사실 누락·환각, API key·credential·region 하드코딩 금지가 포함된다.
+검사 범위에는 schema/taxonomy 우회, 손상 JSON, 첫 tool 선택, 결과·입력 불변성, AccessDenied 무재시도, Throttling 호출 상한, compact 사실 누락·환각, API key·credential 하드코딩 금지와 서울 리전 명시가 포함된다.
 
 실제 AWS 연결 검사는 이 영구 회귀 검사에 포함하지 않는다. 서비스 통합 시 `session_service`는 성공과 실패의 `Usage`를 `bedrock_log_repo`에 저장하고, compact 실패 시 기존 context·title·`compacted_upto`를 유지해야 한다.
