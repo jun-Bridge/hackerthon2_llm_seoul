@@ -285,50 +285,27 @@ export default function ChatModal({ onClose }) {
             새 민원 접수
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <button
-              onClick={() => onClose(false)}
-              style={{
-                border: "1px solid rgba(148, 163, 184, 0.35)",
-                background: "rgba(255,255,255,0.42)",
-                color: "#0F172A",
-                borderRadius: "999px",
-                height: "34px",
-                padding: "0 14px",
-                fontSize: "0.92rem",
-                fontWeight: 600,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "6px",
-              }}
-            >
-              <span style={{ fontSize: "0.9rem" }}>☰</span>
-              현황
-            </button>
-            <button
-              onClick={handleReset}
-              style={{
-                border: "1px solid rgba(148, 163, 184, 0.35)",
-                background: "rgba(255,255,255,0.42)",
-                color: "#0F172A",
-                borderRadius: "999px",
-                height: "34px",
-                padding: "0 14px",
-                fontSize: "0.92rem",
-                fontWeight: 600,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "6px",
-              }}
-            >
-              <span style={{ fontSize: "0.88rem" }}>⟳</span>
-              초기화
-            </button>
-          </div>
+          <button
+            onClick={handleReset}
+            style={{
+              border: "1px solid rgba(148, 163, 184, 0.35)",
+              background: "rgba(255,255,255,0.48)",
+              color: "#0F172A",
+              borderRadius: "999px",
+              height: "34px",
+              padding: "0 14px",
+              fontSize: "0.92rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+            }}
+          >
+            <span style={{ fontSize: "0.88rem" }}>⟳</span>
+            초기화
+          </button>
         </div>
       </div>
 
