@@ -1,13 +1,23 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppContext';
+import { formatDate } from '../store/constants';
+import ComplaintDetailModal from '../components/common/ComplaintDetailModal';
 import PageHeader from '../components/common/PageHeader';
 
 const CATEGORIES = ['전체', '냉난방 / 공조', '위생 / 배관', '전기 / 설비', '영상 / 기자재', '공간 / 편의', '안전 / 보안', '통신 / 인터넷', '기타'];
 
 export default function BoardPage() {
-  const { complaints } = useApp();
+  const { complaints, user, refreshComplaints, replaceComplaint, removeComplaint } = useApp();
   const [filter, setFilter] = useState('전체');
   const [search, setSearch] = useState('');
+  const [openId, setOpenId] = useState(null);
+  const isAdmin = user?.role === 'admin';
+
+  // 상세에서 상태가 바뀌거나 철회되면 목록에 반영한다.
+  const handleChanged = (u) => {
+    if (u.__withdrawn) { removeComplaint(u.id); refreshComplaints().catch(() => {}); }
+    else replaceComplaint(u);
+  };
 
   const catFiltered = filter === '전체' ? complaints :
     filter === '기타' ? complaints.filter(c => !CATEGORIES.slice(1, -1).includes(c.category)) :
@@ -51,20 +61,29 @@ export default function BoardPage() {
           {filtered.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>등록된 민원이 없습니다</div>
           ) : filtered.map(c => (
-            <div key={c.id} style={{ padding: '16px 4px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+            <div key={c.id} onClick={() => setOpenId(c.id)} style={{ padding: '16px 4px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                   <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: '9999px' }}>{c.category}</span>
                   <span className={`status-pill status-${c.status}`}>{c.status}</span>
                 </div>
                 <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0F172A', marginBottom: '4px', lineHeight: '1.4' }}>{c.title}</div>
-                <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>{c.location} · {c.timestamp}</div>
+                <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>{c.location} · {formatDate(c.created_at)}</div>
               </div>
               <i className="bi bi-chevron-right" style={{ color: '#D1D5DB', fontSize: '1rem' }}></i>
             </div>
           ))}
         </div>
       </div>
+
+      {openId != null && (
+        <ComplaintDetailModal
+          complaintId={openId}
+          isAdmin={isAdmin}
+          onClose={() => setOpenId(null)}
+          onChanged={handleChanged}
+        />
+      )}
     </div>
   );
 }

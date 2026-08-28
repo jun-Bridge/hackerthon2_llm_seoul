@@ -33,3 +33,9 @@ build/
 .aws/
 env.md
 **/env.md
+
+# Claude Code (로컬 전용 — 머신마다 다름)
+.claude/settings.local.json
+.claude/sessions/
+.claude/logs/
+sync.txt
