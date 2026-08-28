@@ -11,12 +11,14 @@ import ChatModal from '../components/chat/ChatModal';
 
 export default function MainPage() {
   const { user, refreshComplaints, refreshStats } = useApp();
-  const [tab, setTab] = useState('home');
+  const isAdmin = user?.role === 'admin';
+  // 관리자는 민원을 접수하지 않는다 — 첫 화면을 관리 대시보드로 연다.
+  const [tab, setTab] = useState(isAdmin ? 'admin' : 'home');
   const [chatOpen, setChatOpen] = useState(false);
   const [initialCategory, setInitialCategory] = useState(null);  // 카테고리 프리셋(홈 아이콘 클릭 시)
-  const isAdmin = user?.role === 'admin';
 
   const openChat = (category = null) => {
+    if (isAdmin) return;   // 관리자는 채팅(민원 접수) 진입 불가 — 백엔드도 require_student
     setInitialCategory(typeof category === 'string' ? category : null);
     setChatOpen(true);
   };
@@ -38,12 +40,13 @@ export default function MainPage() {
 
   const renderPage = () => {
     switch (tab) {
-      case 'home': return <HomePage onOpenChat={openChat} />;
+      // 관리자의 홈은 학생용 접수 화면이 아니라 관리 대시보드다.
+      case 'home': return isAdmin ? <AdminPage /> : <HomePage onOpenChat={openChat} />;
       case 'status': return <StatusPage />;
       case 'board': return <BoardPage />;
       case 'admin': return <AdminPage />;
       case 'profile': return <ProfilePage />;
-      default: return <HomePage onOpenChat={openChat} />;
+      default: return isAdmin ? <AdminPage /> : <HomePage onOpenChat={openChat} />;
     }
   };
 
