@@ -22,12 +22,13 @@ from app.repo import (
     conversation_repo,
     pool,
 )
-from app.schemas.complaint import BedrockLogOut, ComplaintOut, StatsOut
+from app.schemas.complaint import BedrockLogOut, CommentOut, ComplaintOut, StatsOut
 from app.services import auth_service
 
 from app.schemas.session import ConversationTurn
 from app.services._mappers import (
     bedrock_log_from_row,
+    comment_from_row,
     complaint_from_row,
     conversation_turn_from_row,
     stats_from_row,
@@ -149,11 +150,12 @@ def reject(complaint_id: int, school_id: int) -> ComplaintOut:
         return _admin_detail(conn, complaint_id, school_id)
 
 
-def add_comment(complaint_id: int, school_id: int, author_user_id: int, content: str) -> ComplaintOut:
-    """상태와 무관하게 일반 코멘트를 누적하고 갱신된 상세를 반환한다.
+def add_comment(complaint_id: int, school_id: int, author_user_id: int, content: str) -> CommentOut:
+    """상태와 무관하게 일반 코멘트를 누적하고 방금 추가한 코멘트를 반환한다.
 
-    현재 Service stub의 반환 계약은 ComplaintOut이다. API 문서의 CommentOut과
-    A route가 동기화되면 반환 타입을 함께 조정해야 한다.
+    api-contract #22: 반환은 CommentOut(추가된 코멘트 1건, 201). 작성자 식별자는
+    응답에 넣지 않는다(_mappers.comment_from_row가 제외). 코멘트는 누적이며
+    덮어쓰지 않는다.
     """
     if not isinstance(content, str) or not content.strip():
         raise DomainError("코멘트 내용을 입력해 주세요.")
@@ -161,14 +163,17 @@ def add_comment(complaint_id: int, school_id: int, author_user_id: int, content:
     with pool.transaction() as conn:
         if complaint_repo.get(conn, complaint_id, school_id) is None:
             raise NotFoundError("민원을 찾을 수 없습니다.")
-        comment_repo.add(
+        new_id = comment_repo.add(
             conn,
             complaint_id,
             author_user_id,
             normalized,
             is_hold_reason=False,
         )
-        return _admin_detail(conn, complaint_id, school_id)
+        for row in comment_repo.list(conn, complaint_id):
+            if row.get("id") == new_id:
+                return comment_from_row(row)
+    raise NotFoundError("코멘트를 찾을 수 없습니다.")
 
 
 def get_bedrock_logs(school_id: int, limit: int = 50) -> list[BedrockLogOut]:

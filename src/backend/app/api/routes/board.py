@@ -12,16 +12,16 @@ school_id는 세션(current_user)에서 꺼내 서비스에 넘긴다 — 요청
 from fastapi import APIRouter, Depends, status
 
 from app.api.deps import CurrentUser, current_user
-from app.schemas.complaint import ComplaintOut, WithdrawIn
+from app.schemas.complaint import ComplaintOut, Status, WithdrawIn
 from app.schemas.session import ConversationTurn
 from app.services import complaint_service
 
 router = APIRouter(prefix="/complaints", tags=["board"])
 
 
-# ── #12 게시판 목록 (?status= 선택) ──────────────────────────────
+# ── #12 게시판 목록 (?status= 선택, 생략 시 철회 뺀 전체) ────────
 @router.get("", response_model=list[ComplaintOut])
-def list_complaints(status: str | None = None, user: CurrentUser = Depends(current_user)):
+def list_complaints(status: Status | None = None, user: CurrentUser = Depends(current_user)):
     return complaint_service.list_complaints(user.school_id, user.user_id, status)
 
 

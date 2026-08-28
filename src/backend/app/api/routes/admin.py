@@ -13,10 +13,17 @@
 상태 변경 응답은 갱신된 ComplaintOut — 프론트는 이걸로 상세를 갈아끼우고 목록·통계만 다시 받는다.
 school_id는 세션(current_user)에서 꺼내 서비스에 넘긴다.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
 from app.api.deps import CurrentUser, require_admin
-from app.schemas.complaint import BedrockLogOut, CommentIn, ComplaintOut, HoldIn, StatsOut
+from app.schemas.complaint import (
+    BedrockLogOut,
+    CommentIn,
+    CommentOut,
+    ComplaintOut,
+    HoldIn,
+    StatsOut,
+)
 from app.services import complaint_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -60,8 +67,12 @@ def reject_complaint(complaint_id: int, user: CurrentUser = Depends(require_admi
     return complaint_service.reject(complaint_id, user.school_id)
 
 
-# ── #22 코멘트 추가 ───────────────────────────────────────────────
-@router.post("/complaints/{complaint_id}/comments", response_model=ComplaintOut)
+# ── #22 코멘트 추가 (추가된 코멘트 1건, 201) ────────────────────
+@router.post(
+    "/complaints/{complaint_id}/comments",
+    status_code=status.HTTP_201_CREATED,
+    response_model=CommentOut,
+)
 def add_comment(
     complaint_id: int, body: CommentIn, user: CurrentUser = Depends(require_admin)
 ):

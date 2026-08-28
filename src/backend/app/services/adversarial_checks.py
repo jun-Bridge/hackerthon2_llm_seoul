@@ -425,9 +425,11 @@ def _check_remaining_services(checks: Checks, tx: FakeTransactions) -> None:
     row = _complaint_row()
     cs.complaint_repo.get = lambda c, cid, school: row.copy() if school == 7 else None
     added: list[tuple] = []
-    cs.comment_repo.add = lambda *args, **kwargs: added.append((args, kwargs)) or 9
+    # add는 새 코멘트 id(2)를 반환하고, list는 그 id를 가진 row를 돌려준다.
+    # add_comment는 그 row로 CommentOut을 만든다 (api-contract #22).
+    cs.comment_repo.add = lambda *args, **kwargs: added.append((args, kwargs)) or 2
     cs.comment_repo.list = lambda c, cid: [_comment_row()]
-    checks.true(cs.add_comment(5, 7, 99, "  확인 중  ").id == 5, "일반 코멘트 실패")
+    checks.true(cs.add_comment(5, 7, 99, "  확인 중  ").id == 2, "일반 코멘트 실패")
     checks.true(added[0][0][3] == "확인 중" and added[0][1]["is_hold_reason"] is False, "일반 코멘트 저장 오류")
     before = len(tx.events)
     checks.raises(DomainError, lambda: cs.add_comment(5, 7, 99, "  "))
