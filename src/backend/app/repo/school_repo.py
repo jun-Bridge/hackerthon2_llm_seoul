@@ -5,17 +5,36 @@
 """
 
 
+def normalize_domain(email_or_domain: str) -> str:
+    """이메일 또는 도메인 문자열을 조회용 도메인으로 정규화한다.
+
+    학교를 정하는 근거는 도메인 하나뿐이라, 대소문자·공백 차이로 조회가 조용히
+    어긋나지 않게 여기서 한 번에 통일한다. '@'가 있으면 뒤쪽만 취한다.
+
+    예: '  Student1@Chosun.AC.KR ' → 'chosun.ac.kr'
+        'JBNU.ac.kr'              → 'jbnu.ac.kr'
+    """
+    s = (email_or_domain or "").strip().lower()
+    if "@" in s:
+        s = s.rsplit("@", 1)[-1]
+    return s
+
+
 def find_by_domain(conn, domain: str) -> dict | None:
     """이메일 '@' 뒤 도메인으로 학교를 조회한다.
 
     Args:
-        domain: 소문자로 정규화된 도메인 (예: 'chosun.ac.kr')
+        domain: 도메인 또는 전체 이메일. 내부에서 normalize_domain으로 정규화하므로
+                호출부가 대소문자·공백을 신경 쓰지 않아도 된다.
 
     Returns:
         {"id": int, "name": str} 또는 없으면 None.
         None이면 호출부(auth_service.signup)가 UnsupportedDomainError를 던진다.
     """
-    raise NotImplementedError
+    return conn.execute(
+        "SELECT id, name FROM schools WHERE email_domain = %s",
+        (normalize_domain(domain),),
+    ).fetchone()
 
 
 def list_all(conn) -> list[dict]:
@@ -25,7 +44,14 @@ def list_all(conn) -> list[dict]:
         [{"name": str, "email_domain": str, "aliases": list[str]}, ...]
         id는 반환하지 않는다 — 가입 요청에 school_id를 쓰지 않으므로.
     """
-    raise NotImplementedError
+    rows = conn.execute(
+        "SELECT name, email_domain, aliases FROM schools ORDER BY name"
+    ).fetchall()
+    # aliases 컬럼이 NULL이면 빈 리스트로 정규화 (프론트가 항상 배열을 기대).
+    for r in rows:
+        if r.get("aliases") is None:
+            r["aliases"] = []
+    return rows
 
 
 def verify_admin_code(conn, school_id: int, code: str) -> bool:
@@ -39,4 +65,8 @@ def verify_admin_code(conn, school_id: int, code: str) -> bool:
     Returns:
         일치하는 코드가 있으면 True.
     """
-    raise NotImplementedError
+    row = conn.execute(
+        "SELECT 1 FROM admin_codes WHERE school_id = %s AND code = %s LIMIT 1",
+        (school_id, code),
+    ).fetchone()
+    return row is not None

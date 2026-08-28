@@ -6,12 +6,21 @@
 압축과 다음 턴이 동시에 compacted_upto를 옮기면 구간이 겹치거나 빈다.
 turn_lock과 별도 잠금인 이유: 압축이 대화를 막지 않게 하기 위함.
 """
+from app.core.config import get_settings
+from app.session import get_redis
+
+_KEY = "compact:{sid}"
+
+
+def _key(session_id: int) -> str:
+    return _KEY.format(sid=session_id)
 
 
 def acquire(session_id: int) -> bool:
     """SET NX로 압축 잠금 시도. 이미 압축 중이면 False (이번 압축은 건너뛴다)."""
-    raise NotImplementedError
+    ttl = get_settings().compact_lock_ttl_seconds
+    return bool(get_redis().set(_key(session_id), "1", nx=True, ex=ttl))
 
 
 def release(session_id: int) -> None:
-    raise NotImplementedError
+    get_redis().delete(_key(session_id))

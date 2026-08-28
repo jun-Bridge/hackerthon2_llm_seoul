@@ -4,6 +4,7 @@
 호출하는 쪽: app/services/session_service.py (작성), app/services/complaint_service.py (원문 조회)
 정본: requirements.md 의 complaint_conversations 스키마, backend-design.md §7.
 """
+from psycopg.types.json import Jsonb
 
 
 def add_turn(
@@ -21,17 +22,48 @@ def add_turn(
                   (get_last_refined가 이걸로 확정 여부를 판단).
     complaint_id는 접수 전이라 여기서 채우지 않는다 — submit 시 일괄 UPDATE된다.
     """
-    raise NotImplementedError
+    row = conn.execute(
+        """
+        INSERT INTO complaint_conversations
+            (chat_session_id, role, content, choices, refined_json)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            chat_session_id,
+            role,
+            content,
+            Jsonb(choices) if choices is not None else None,
+            Jsonb(refined_json) if refined_json is not None else None,
+        ),
+    ).fetchone()
+    return row["id"]
 
 
 def list_by_session(conn, chat_session_id: int) -> list[dict]:
     """작성 중 대화 조회 (시간순). 화면 렌더링·새로고침 복원용."""
-    raise NotImplementedError
+    return conn.execute(
+        """
+        SELECT id, role, content, choices, refined_json, created_at
+        FROM complaint_conversations
+        WHERE chat_session_id = %s
+        ORDER BY id
+        """,
+        (chat_session_id,),
+    ).fetchall()
 
 
 def list_by_complaint(conn, complaint_id: int) -> list[dict]:
     """접수 후 "원문 보기" 조회 (시간순). 게시판·관리자 상세 공용."""
-    raise NotImplementedError
+    return conn.execute(
+        """
+        SELECT id, role, content, choices, refined_json, created_at
+        FROM complaint_conversations
+        WHERE complaint_id = %s
+        ORDER BY id
+        """,
+        (complaint_id,),
+    ).fetchall()
 
 
 def get_last_refined(conn, chat_session_id: int) -> dict | None:
@@ -44,11 +76,31 @@ def get_last_refined(conn, chat_session_id: int) -> dict | None:
         {"category", "location", "refined_title", "refined_body"} 또는
         확정 턴이 하나도 없으면 None (접수 불가 → submit이 DraftNotCompleteError).
     """
-    raise NotImplementedError
+    row = conn.execute(
+        """
+        SELECT refined_json
+        FROM complaint_conversations
+        WHERE chat_session_id = %s AND refined_json IS NOT NULL
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (chat_session_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    # psycopg는 JSONB를 파이썬 dict로 이미 역직렬화해 돌려준다.
+    return row["refined_json"]
 
 
 def link_to_complaint(conn, chat_session_id: int, complaint_id: int) -> None:
     """접수 시 그 세션의 모든 대화 행에 complaint_id를 채운다.
     submit() 트랜잭션의 한 단계 — 스스로 commit하지 않는다.
     """
-    raise NotImplementedError
+    conn.execute(
+        """
+        UPDATE complaint_conversations
+        SET complaint_id = %s
+        WHERE chat_session_id = %s
+        """,
+        (complaint_id, chat_session_id),
+    )
