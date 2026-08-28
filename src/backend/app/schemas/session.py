@@ -15,7 +15,6 @@ Category = Literal[
 ]
 
 MissingField = Literal["category", "location", "detail"]
-Step = Literal["category", "location", "detail", "confirm"]
 
 
 class ConversationTurn(BaseModel):
@@ -64,16 +63,16 @@ class RefinedPreview(BaseModel):
 
 
 class RefineResultOut(BaseModel):
-    """POST /chat-sessions/{sid}/messages 응답. 필드명은 프론트 계약(api-contract #9) 정본.
+    """POST /chat-sessions/{sid}/messages 응답.
 
-    is_complete=False: step(category/location/detail)·question·choices 채움.
-    is_complete=True:  step='confirm'·preview 채움 (title/category는 바뀐 경우에만).
+    is_complete=False 인 경우 follow_up_question·choices 채움.
+    is_complete=True 인 경우 preview 채움 (title/category는 바뀐 경우에만 채움).
     """
 
     is_complete: bool
-    step: Step | None = None
-    question: str | None = None
+    follow_up_question: str | None = None
     choices: list[str] | None = None
+    missing: MissingField | None = None
     preview: RefinedPreview | None = None
     title: str | None = None
     category: Category | None = None

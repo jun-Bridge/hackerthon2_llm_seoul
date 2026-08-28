@@ -169,7 +169,6 @@ def _replay_duplicate(
     if refined_json is not None:
         return RefineResultOut(
             is_complete=True,
-            step="confirm",
             preview=_preview_from_payload(refined_json),
         )
 
@@ -180,14 +179,14 @@ def _replay_duplicate(
     if any(not isinstance(choice, str) or not choice.strip() for choice in choices):
         raise ServiceContractError("stored assistant choices are invalid")
     state = chip_state.get_state(session_id) or {}
-    step = state.get("step")
-    if step not in {"category", "location", "detail"}:
-        step = None
+    missing = state.get("step")
+    if missing not in {"category", "location", "detail"}:
+        missing = None
     return RefineResultOut(
         is_complete=False,
-        step=step,
-        question=content,
+        follow_up_question=content,
         choices=list(choices),
+        missing=missing,
     )
 
 
@@ -366,9 +365,9 @@ def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
                 raise ConversationStuckError("같은 질문이 반복되어 대화를 진행할 수 없습니다.")
             return RefineResultOut(
                 is_complete=False,
-                step=result.missing,
-                question=question,
+                follow_up_question=question,
                 choices=choices,
+                missing=result.missing,
             )
 
         refined = _validated_refined_payload(
@@ -408,7 +407,6 @@ def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
         chip_state.set_state(session_id, "confirm", 0)
         return RefineResultOut(
             is_complete=True,
-            step="confirm",
             preview=_preview_from_payload(refined),
             title=title_update,
             category=category_update,

@@ -299,7 +299,7 @@ def _check_send_message(checks: Checks, tx: FakeTransactions) -> None:
 
     ss.llm_client.refine = followup
     out = ss.send_message(11, 3, "  물이 새요  ")
-    checks.true(out.is_complete is False and "(예:" in out.question, "반복 안내 실패")
+    checks.true(out.is_complete is False and "(예:" in out.follow_up_question, "반복 안내 실패")
     checks.true(captured["buffer"] == [{"role": "student", "content": "물이 새요"}], "압축 경계/buffer 실패")
     checks.true(stored[0][0][2:4] == ("student", "물이 새요"), "학생 발화 선저장 실패")
     checks.true(stored[1][0][2] == "assistant" and stored[1][1]["choices"][-1] == "직접 입력", "assistant choices 저장 실패")
@@ -315,7 +315,7 @@ def _check_send_message(checks: Checks, tx: FakeTransactions) -> None:
     ss.chip_state.get_state = lambda sid: {"step": "location", "repeat_count": 1}
     ss.llm_client.refine = lambda *_: (_ for _ in ()).throw(AssertionError("duplicate LLM call"))
     duplicate = ss.send_message(11, 3, "같은 말")
-    checks.true(duplicate.question == "어디인가요?", "동일 발화 응답 재사용 실패")
+    checks.true(duplicate.follow_up_question == "어디인가요?", "동일 발화 응답 재사용 실패")
     checks.true(len(stored) == before_stored, "동일 발화가 다시 저장됨")
 
     # Bedrock 실패도 Usage를 기록하고 lock을 해제한다.
