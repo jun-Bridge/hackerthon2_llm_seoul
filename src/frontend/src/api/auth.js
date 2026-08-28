@@ -11,6 +11,10 @@ export const logout = () => request("POST", "/auth/logout");
 export const getMe = () => request("GET", "/auth/me"); // → Me (401이면 호출부에서 null 처리)
 export const changePassword = (currentPassword, newPassword) =>
   request("PATCH", "/auth/password", { body: { current_password: currentPassword, new_password: newPassword } });
+// 가입 후 교직원 인증 — 관리자 코드를 대조해 역할을 admin으로 올린다.
+// 성공하면 갱신된 Me가 오고 서버가 세션 쿠키를 새 role로 갈아끼운다.
+export const submitAdminCode = (adminCode) =>
+  request("POST", "/auth/admin-code", { body: { admin_code: adminCode } });
 export const deleteAccount = (password) =>
   request("DELETE", "/auth/me", { body: { password } });
 // 되돌릴 수 없는 동작(철회·탈퇴) 전 본인 확인. 아무것도 바꾸지 않음. 틀리면 401 WRONG_PASSWORD.

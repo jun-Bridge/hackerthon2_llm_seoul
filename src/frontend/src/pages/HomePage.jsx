@@ -18,110 +18,18 @@ const statusColors = {
   보류: "#8B5CF6",
 };
 
-const demoComplaints = [
-  {
-    id: 1,
-    title: "공학관 3층 에어컨이 작동하지 않아요",
-    location: "공학관 3층",
-    category: "냉난방 / 공조",
-    status: "처리중",
-    created_at: "2026-08-20T10:00:00Z",
-    is_mine: false,
-  },
-  {
-    id: 2,
-    title: "학생회관 화장실 세면대에서 물이 새고 있어요",
-    location: "학생회관 2층",
-    category: "위생 / 배관",
-    status: "해결완료",
-    created_at: "2026-08-18T14:30:00Z",
-    is_mine: true,
-  },
-  {
-    id: 3,
-    title: "중앙도서관 4층 조명이 너무 어두워요",
-    location: "중앙도서관 4층",
-    category: "전기 / 설비",
-    status: "미확인",
-    created_at: "2026-08-17T09:20:00Z",
-    is_mine: false,
-  },
-  {
-    id: 4,
-    title: "본관 자동문이 멈춰서 불편합니다",
-    location: "본관 정문",
-    category: "안전 / 보안",
-    status: "처리중",
-    created_at: "2026-08-16T16:55:00Z",
-    is_mine: false,
-  },
-  {
-    id: 5,
-    title: "실습실 와이파이가 자주 끊겨요",
-    location: "공학관 5층",
-    category: "통신 / 인터넷",
-    status: "보류",
-    created_at: "2026-08-15T11:40:00Z",
-    is_mine: false,
-  },
-];
-
-export default function HomePage({ onOpenChat, onTabChange, isGuest }) {
+export default function HomePage({ onOpenChat, onTabChange }) {
   const { user, complaints } = useApp();
-  const activeComplaints = complaints.length ? complaints : demoComplaints;
-  const isAdmin = user?.role === "admin" || user?.role === "staff";
-  const myList = isGuest ? [] : activeComplaints.filter((c) => c.is_mine);
+  const isAdmin = user?.role === "admin";
+  const myList = complaints.filter((c) => c.is_mine);
   const processing = myList.filter((c) => c.status === "처리중").length;
   const done = myList.filter((c) => c.status === "해결완료").length;
 
-  // 게스트: 한국대 캠퍼스 상황만 보여주는 시나리오
-  const [guestPosts, setGuestPosts] = useState(demoComplaints);
-  const [fadeKey, setFadeKey] = useState(0);
   const [hoveredPinId, setHoveredPinId] = useState(null);
 
-  useEffect(() => {
-    if (!isGuest) return;
-    const interval = setInterval(() => {
-      setGuestPosts((prev) => {
-        const next = [...prev];
-        const first = next.shift();
-        next.push(first);
-        return next;
-      });
-      setFadeKey((k) => k + 1);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [isGuest]);
-
-  // 게스트: 로그아웃 상태에서는 다른 대학 이름을 돌려서 보여준다
-  const universities = [
-    "군산대학교",
-    "전남대학교",
-    "서울대학교",
-    "연세대학교",
-    "고려대학교",
-    "부산대학교",
-    "KAIST",
-  ];
-  const [uniIndex, setUniIndex] = useState(0);
-
-  // 게스트: 숫자 다이얼 롤링
-  const [dialNum, setDialNum] = useState(128);
-
-  useEffect(() => {
-    if (!isGuest) return;
-    const interval = setInterval(() => {
-      setUniIndex((i) => (i + 1) % universities.length);
-      setDialNum((n) => n + Math.floor(Math.random() * 3) + 1);
-    }, 2500);
-    return () => clearInterval(interval);
-  }, [isGuest]);
-
-  const sourceList = isGuest
-    ? guestPosts
-    : complaints.length
-      ? complaints
-      : demoComplaints;
+  // 화면에 뜨는 것은 전부 서버가 준 우리 학교 민원이다. 가짜로 채우지 않는다 —
+  // 비어 있으면 "민원이 없다"가 사실이고, 데모를 섞으면 빈 게시판과 장애를 구분할 수 없다.
+  const sourceList = complaints;
   const displayList = sourceList.slice(0, 5);
   const mapPins = sourceList.map((complaint, index) => {
     const fallbackTop = `${18 + ((index * 17) % 58)}%`;
@@ -145,27 +53,15 @@ export default function HomePage({ onOpenChat, onTabChange, isGuest }) {
   return (
     <div className="home-page">
       <div className="greeting">
-        {isGuest ? (
-          <>
-            <span
-              key={uniIndex}
-              style={{
-                display: "inline-block",
-                animation: "fadeSlide 0.3s ease",
-              }}
-            >
-              {universities[uniIndex]}
-            </span>{" "}
-            캠퍼스 민원,<span className="greeting-name">다듬이가 해결해요</span>
-          </>
-        ) : (
-          <>
-            안녕하세요,
-            <span className="greeting-name">
-              {user?.email?.split("@")[0] || "student"}님
-            </span>
-          </>
+        {user?.school_name && (
+          <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#64748B" }}>
+            {user.school_name}
+          </div>
         )}
+        안녕하세요,
+        <span className="greeting-name">
+          {user?.email?.split("@")[0] || "학생"}님
+        </span>
       </div>
 
       <div className="input-trigger" onClick={onOpenChat}>
@@ -349,13 +245,13 @@ export default function HomePage({ onOpenChat, onTabChange, isGuest }) {
           <span>
             전체{" "}
             <b
-              key={isGuest ? dialNum : "real"}
+              key="real"
               style={{
                 display: "inline-block",
-                animation: isGuest ? "fadeSlide 0.3s ease" : "none",
+                animation: "none",
               }}
             >
-              {isGuest ? dialNum : isAdmin ? complaints.length : myList.length}
+              {isAdmin ? complaints.length : myList.length}
             </b>
             건
           </span>
@@ -364,10 +260,10 @@ export default function HomePage({ onOpenChat, onTabChange, isGuest }) {
             <b
               style={{
                 display: "inline-block",
-                animation: isGuest ? "fadeSlide 0.3s ease" : "none",
+                animation: "none",
               }}
             >
-              {isGuest ? Math.floor(dialNum * 0.14) : processing}
+              {processing}
             </b>
             건
           </span>
@@ -376,10 +272,10 @@ export default function HomePage({ onOpenChat, onTabChange, isGuest }) {
             <b
               style={{
                 display: "inline-block",
-                animation: isGuest ? "fadeSlide 0.3s ease" : "none",
+                animation: "none",
               }}
             >
-              {isGuest ? Math.floor(dialNum * 0.72) : done}
+              {done}
             </b>
             건
           </span>
@@ -403,8 +299,8 @@ export default function HomePage({ onOpenChat, onTabChange, isGuest }) {
           </span>
         </div>
         <div
-          key={isGuest ? fadeKey : "list"}
-          style={{ animation: isGuest ? "fadeSlide 0.4s ease" : "none" }}
+          key="list"
+          style={{ animation: "none" }}
         >
           {displayList.map((c) => (
             <div key={c.id} className="recent-row">

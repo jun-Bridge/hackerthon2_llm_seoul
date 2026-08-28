@@ -2,26 +2,32 @@ import { useState } from "react";
 import { useApp } from "../../store/AppContext";
 import { useToast } from "./Toast";
 
-// 상태 전이 규칙
+// 상태 전이 규칙 — 백엔드 complaint_repo가 UPDATE...WHERE status=<전제> 로 강제하는 것과
+// 같은 표여야 한다. 어긋나면 버튼은 보이는데 서버가 409 INVALID_TRANSITION으로 막는다.
+//   미확인 → 확인 : 버튼이 아니라 '상세 열람'(POST open)의 부작용이라 여기 없다
+//   해결완료로 들어오는 경로는 처리중과 보류 둘 다
 function getAvailableTransitions(status) {
   switch (status) {
-    case "미확인":
-      return ["확인"];
     case "확인":
       return ["처리중", "보류", "거절"];
     case "처리중":
       return ["해결완료"];
     case "보류":
-      return ["확인", "처리중"];
+      return ["해결완료"];
     default:
-      return [];
+      return []; // 미확인·해결완료·거절: 누를 수 있는 전이 없음
   }
 }
+
+// 보류·거절은 사유가 필수다. 서버가 빈 사유를 422로 막으므로 화면에서도 먼저 거른다.
+const REASON_REQUIRED = ["보류", "거절"];
 
 export default function AdminDetailModal({ complaint, onClose }) {
   const { changeStatus } = useApp();
   const { showToast } = useToast();
-  const [comment, setComment] = useState(complaint.comment || "");
+  // 백엔드는 comments 배열을 준다(단수 comment 필드는 없다). 보류 사유를 강조해 초기 표시.
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState(null);
 
@@ -29,14 +35,23 @@ export default function AdminDetailModal({ complaint, onClose }) {
 
   const transitions = getAvailableTransitions(complaint.status);
 
-  const handleAction = (newStatus) => {
-    if (newStatus === "보류" && !comment.trim()) {
-      showToast("보류 사유를 코멘트에 입력해 주세요.");
+  const handleAction = async (newStatus) => {
+    if (busy) return;
+    const reason = comment.trim();
+    if (REASON_REQUIRED.includes(newStatus) && !reason) {
+      showToast(`${newStatus} 사유를 코멘트에 입력해 주세요.`);
       return;
     }
-    changeStatus(complaint.id, newStatus);
-    showToast(`#${complaint.id} 상태 → ${newStatus}`);
-    onClose();
+    setBusy(true);
+    try {
+      await changeStatus(complaint.id, newStatus, reason);
+      showToast(`#${complaint.id} 상태 → ${newStatus}`);
+      onClose();
+    } catch (e) {
+      showToast(e?.message || "상태 변경에 실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleConfirmStatusChange = () => {
@@ -166,7 +181,8 @@ export default function AdminDetailModal({ complaint, onClose }) {
                 </button>
               </>
             )}
-            {complaint.status === "처리중" && (
+            {/* 해결완료로 들어오는 경로는 둘 — 처리중과 보류 (backend §4 전이표) */}
+            {(complaint.status === "처리중" || complaint.status === "보류") && (
               <button
                 onClick={() => handleAction("해결완료")}
                 style={{

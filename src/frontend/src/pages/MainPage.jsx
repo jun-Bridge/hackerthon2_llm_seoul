@@ -9,28 +9,19 @@ import AdminPage from "./AdminPage";
 import ProfilePage from "./ProfilePage";
 import ChatModal from "../components/chat/ChatModal";
 
-export default function MainPage({ isGuest, onRequestLogin }) {
+export default function MainPage() {
   const { user, refreshComplaints, refreshStats } = useApp();
   const [tab, setTab] = useState("home");
   const [chatOpen, setChatOpen] = useState(false);
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
   const isAdmin = user?.role === "admin";
 
-  // 게스트 모드: 인터랙션 차단
-  const guardAction = (action) => {
-    if (isGuest) {
-      if (onRequestLogin) onRequestLogin();
-      return;
-    }
-    action();
-  };
-
   // 로그인 직후 실제 게시판 목록을 백엔드에서 받아온다. 관리자면 통계도.
   useEffect(() => {
-    if (isGuest) return;
+
     refreshComplaints().catch(() => {});
     if (isAdmin) refreshStats().catch(() => {});
-  }, [refreshComplaints, refreshStats, isAdmin, isGuest]);
+  }, [refreshComplaints, refreshStats, isAdmin]);
 
   // 챗봇으로 새 민원 접수가 끝나면 목록을 갱신한다.
   const handleChatClose = (submitted) => {
@@ -42,10 +33,8 @@ export default function MainPage({ isGuest, onRequestLogin }) {
   };
 
   const handleTabChange = (nextTab, complaintId = null) => {
-    guardAction(() => {
-      setTab(nextTab);
-      setSelectedComplaintId(complaintId);
-    });
+    setTab(nextTab);
+    setSelectedComplaintId(complaintId);
   };
 
   const renderPage = () => {
@@ -53,9 +42,8 @@ export default function MainPage({ isGuest, onRequestLogin }) {
       case "home":
         return (
           <HomePage
-            onOpenChat={() => guardAction(() => setChatOpen(true))}
+            onOpenChat={() => setChatOpen(true)}
             onTabChange={handleTabChange}
-            isGuest={isGuest}
           />
         );
       case "status":
@@ -105,9 +93,9 @@ export default function MainPage({ isGuest, onRequestLogin }) {
       </div>
       <BottomNav
         currentTab={tab}
-        onTabChange={(t) => guardAction(() => setTab(t))}
+        onTabChange={(t) => setTab(t)}
         isAdmin={isAdmin}
-        onFabClick={() => guardAction(() => setChatOpen(true))}
+        onFabClick={() => setChatOpen(true)}
       />
       {chatOpen && <ChatModal onClose={handleChatClose} />}
     </div>

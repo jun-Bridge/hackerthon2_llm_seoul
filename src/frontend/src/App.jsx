@@ -20,6 +20,11 @@ function AppRoot() {
       .finally(() => setChecking(false));
   }, [setUser]);
 
+  // 로그아웃(user → null)하면 로그인 화면에 머무르지 않고 랜딩으로 되돌린다.
+  useEffect(() => {
+    if (!user) setScreen("landing");
+  }, [user]);
+
   if (checking)
     return (
       <div
@@ -62,8 +67,9 @@ function AppRoot() {
     return (
       <AuthPage onBack={() => setScreen("landing")} onLoginSuccess={() => {}} />
     );
-  // 비로그인: 홈 화면을 가짜 데이터로 보여줌
-  return <MainPage isGuest onRequestLogin={() => setScreen("auth")} />;
+  // 비로그인: 랜딩. 로그인하지 않은 사람에게 앱 화면을 보여주지 않는다 —
+  // 보여주려면 가짜 데이터를 채워야 하고, 그러면 로그아웃해도 앱이 그대로인 것처럼 보인다.
+  return <LandingPage onLogin={() => setScreen("auth")} />;
 }
 
 export default function App() {

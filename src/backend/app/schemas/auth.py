@@ -34,6 +34,13 @@ class DeleteAccountIn(BaseModel):
     password: str
 
 
+class AdminCodeIn(BaseModel):
+    """POST /auth/admin-code — 가입 후 교직원 인증(학생 → 관리자 승격).
+    역할 판정 근거는 가입 때와 같이 코드 하나뿐이다."""
+
+    admin_code: str
+
+
 class VerifyIn(BaseModel):
     """POST /auth/verify-password 요청. 되돌릴 수 없는 동작 전 본인 확인만 한다.
     아무것도 바꾸지 않는다 (api-contract #7-1)."""

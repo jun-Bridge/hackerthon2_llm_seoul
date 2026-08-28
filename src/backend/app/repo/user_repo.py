@@ -69,6 +69,25 @@ def get_password_hash(conn, user_id: int) -> str | None:
     return row["password_hash"] if row else None
 
 
+def get_school_id(conn, user_id: int) -> int | None:
+    """그 계정이 어느 학교 소속인지. 관리자 코드 대조는 반드시 이 학교로 한정한다
+    (다른 학교 코드로 승격되면 학교 격리가 뚫린다)."""
+    row = conn.execute(
+        "SELECT school_id FROM users WHERE id = %s",
+        (user_id,),
+    ).fetchone()
+    return row["school_id"] if row else None
+
+
+def set_role(conn, user_id: int, role: str) -> None:
+    """역할 변경. 호출 전에 서비스가 관리자 코드를 검증한다 —
+    이 함수는 판단하지 않고 쓰기만 한다."""
+    conn.execute(
+        "UPDATE users SET role = %s WHERE id = %s",
+        (role, user_id),
+    )
+
+
 def change_password(conn, user_id: int, new_password_hash: str) -> None:
     conn.execute(
         "UPDATE users SET password_hash = %s WHERE id = %s",

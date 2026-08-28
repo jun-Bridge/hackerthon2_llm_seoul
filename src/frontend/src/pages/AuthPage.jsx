@@ -13,28 +13,16 @@ const CODE_MSG = {
   VALIDATION_FAILED: "입력 형식을 확인해 주세요.",
 };
 
-const DEMO_SCHOOL = {
-  id: 1,
-  name: "한국대",
-  email_domain: "koreadae.ac.kr",
-  aliases: ["한국대", "한국대학교", "한국대학"],
-};
-
-const DEMO_USER = {
-  user_id: 1,
-  email: "student@koreadae.ac.kr",
-  password: "demo1234",
-  role: "student",
-  school_name: "한국대",
-};
+// 데모 학교·데모 계정 상수는 두지 않는다. 학교 목록은 GET /schools가,
+// 로그인 상태는 서버 세션(GET /auth/me)이 유일한 출처다.
 
 export default function AuthPage({ onBack, onLoginSuccess }) {
   const { setUser } = useApp();
   const [tab, setTab] = useState("login");
-  const [email, setEmail] = useState(DEMO_USER.email);
-  const [password, setPassword] = useState(DEMO_USER.password);
-  const [schoolSearch, setSchoolSearch] = useState(DEMO_SCHOOL.name);
-  const [selectedSchool, setSelectedSchool] = useState(DEMO_SCHOOL);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [schoolSearch, setSchoolSearch] = useState("");
+  const [selectedSchool, setSelectedSchool] = useState(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const [isStaff, setIsStaff] = useState(false);
   const [adminCode, setAdminCode] = useState("");
@@ -43,21 +31,12 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
   const [error, setError] = useState(""); // 폼 상단 경고
   const [submitting, setSubmitting] = useState(false);
 
+  // 학교 목록은 서버가 정본이다. 실패하면 가짜로 채우지 않고 그 사실을 알린다 —
+  // 가짜 학교로 가입시키면 서버가 도메인을 못 찾아 400으로 튕긴다.
   useEffect(() => {
     listSchools()
-      .then((rows) => {
-        const resolved = rows && rows.length ? rows : [DEMO_SCHOOL];
-        setSchools(resolved);
-        if (!selectedSchool) {
-          setSelectedSchool(DEMO_SCHOOL);
-          setSchoolSearch(DEMO_SCHOOL.name);
-        }
-      })
-      .catch(() => {
-        setSchools([DEMO_SCHOOL]);
-        setSelectedSchool(DEMO_SCHOOL);
-        setSchoolSearch(DEMO_SCHOOL.name);
-      });
+      .then((rows) => setSchools(rows || []))
+      .catch(() => setError("학교 목록을 불러오지 못했습니다. 새로고침해 주세요."));
   }, []);
 
   const filteredSchools = schoolSearch.trim()
@@ -78,25 +57,14 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
     setError("");
   };
 
-  const applyDemoUser = (role = "student") => {
-    const me = {
-      ...DEMO_USER,
-      role,
-      email: role === "admin" ? "admin@koreadae.ac.kr" : DEMO_USER.email,
-    };
+  // 로그인/가입 성공 후 실제 서버 세션에서 나를 가져와 세팅 (role·학교는 서버가 정본).
+  // 실패하면 로그인시키지 않는다 — 세션 없이 화면만 들여보내면 이후 모든 API가 401이고
+  // 프로필은 빈칸이 되며 로그아웃해도 지울 세션이 없다.
+  const finishAuth = async () => {
+    const me = await getMe(); // { user_id, email, role, school_name }
+    if (!me || !me.email) throw new Error("세션을 확인하지 못했습니다.");
     setUser(me);
     onLoginSuccess();
-  };
-
-  // 로그인/가입 성공 후 실제 서버 세션에서 나를 가져와 세팅 (role은 서버가 정본)
-  const finishAuth = async () => {
-    try {
-      const me = await getMe(); // { user_id, email, role, school_name }
-      setUser(me);
-      onLoginSuccess();
-    } catch {
-      applyDemoUser();
-    }
   };
 
   const showError = (err) => {
@@ -128,13 +96,6 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
           return;
         }
         const normalizedEmail = email.trim().toLowerCase();
-        if (
-          normalizedEmail === DEMO_USER.email &&
-          password === DEMO_USER.password
-        ) {
-          applyDemoUser("student");
-          return;
-        }
         await login(normalizedEmail, password);
       } else {
         if (!selectedSchool) {
@@ -149,15 +110,7 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
           setError("관리자 코드를 입력하거나 교직원 체크를 해제하세요.");
           return;
         }
-        if (selectedSchool.name === DEMO_SCHOOL.name) {
-          const demoAdminCode = "koreadae-admin";
-          if (isStaff && adminCode.trim() !== demoAdminCode) {
-            setError("한국대 데모 관리자 코드는 koreadae-admin 입니다.");
-            return;
-          }
-          applyDemoUser(isStaff ? "admin" : "student");
-          return;
-        }
+        // 관리자 코드 검증은 서버가 한다(admin_codes 대조). 틀리면 400 INVALID_ADMIN_CODE.
         const fullEmail = `${email.trim()}@${selectedSchool.email_domain}`;
         const code = isStaff ? adminCode.trim() : null;
         await signup(fullEmail, password, code);

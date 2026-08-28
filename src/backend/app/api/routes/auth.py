@@ -9,6 +9,7 @@ from fastapi import APIRouter, Cookie, Depends, Response, status
 from app.api.deps import SESSION_COOKIE, CurrentUser, current_user
 from app.core.config import get_settings
 from app.schemas.auth import (
+    AdminCodeIn,
     ChangePasswordIn,
     DeleteAccountIn,
     LoginIn,
@@ -96,6 +97,28 @@ def delete_account(
 
 
 # ── #7-1 비밀번호 확인만 (철회·탈퇴 1단계) ───────────────────────
+# ── 교직원 인증 (가입 후 학생 → 관리자 승격) ──────────────────────
+@router.post("/admin-code", response_model=Me)
+def submit_admin_code(
+    body: AdminCodeIn,
+    response: Response,
+    user: CurrentUser = Depends(current_user),
+    sid: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+):
+    """관리자 코드를 대조해 역할을 admin으로 올린다. 틀리면 400 INVALID_ADMIN_CODE.
+
+    역할은 Redis 세션에도 박혀 있어서(권한 판정을 매 요청 DB 조회 없이 하려고)
+    DB만 바꾸면 다음 요청이 여전히 student로 판정된다. 그래서 **세션을 새로 발급**하고
+    쿠키를 갈아끼운다. 옛 세션은 지운다 — 남겨두면 낡은 role이 살아 있게 된다.
+    """
+    school_id = auth_service.promote_with_admin_code(user.user_id, body.admin_code)
+    if sid:
+        login_session.delete(sid)
+    new_sid = login_session.create(user.user_id, school_id, "admin")
+    _set_session_cookie(response, new_sid)
+    return auth_service.get_me(user.user_id)
+
+
 @router.post("/verify-password", status_code=status.HTTP_204_NO_CONTENT)
 def verify_password(body: VerifyIn, user: CurrentUser = Depends(current_user)):
     """되돌릴 수 없는 동작 전 본인 확인만 한다. 아무것도 바꾸지 않는다.

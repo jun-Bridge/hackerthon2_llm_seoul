@@ -106,6 +106,35 @@ def signup(email: str, password: str, admin_code: str | None) -> tuple[int, str]
     return user_id, role
 
 
+def promote_with_admin_code(user_id: int, admin_code: str) -> str:
+    """이미 가입한 계정을 관리자 코드로 교직원(admin)으로 승격한다.
+
+    역할을 정하는 근거는 가입 때와 똑같이 **코드 하나**다. 클라이언트가
+    "저는 교직원입니다" 같은 값을 보내 스스로 주장할 수 없다.
+    코드 대조는 그 계정의 소속 학교로 한정한다 — 다른 학교 코드로 승격되면
+    학교 격리가 뚫린다.
+
+    Returns:
+        새 school_id (호출부가 세션을 다시 만들 때 쓴다)
+
+    Raises:
+        InvalidAdminCodeError: 코드가 비었거나 그 학교 코드와 일치하지 않을 때
+    """
+    code = (admin_code or "").strip()
+    if not code:
+        raise InvalidAdminCodeError("관리자 코드를 입력해 주세요.")
+
+    with pool.transaction() as conn:
+        school_id = user_repo.get_school_id(conn, user_id)
+        if school_id is None:
+            raise UnauthenticatedError("로그인이 필요합니다.")
+        if not school_repo.verify_admin_code(conn, school_id, code):
+            raise InvalidAdminCodeError("관리자 코드가 올바르지 않습니다.")
+        user_repo.set_role(conn, user_id, "admin")
+
+    return school_id
+
+
 def _is_unique_violation(exc: Exception) -> bool:
     """DB 종류에 상관없이 UNIQUE 제약 위반을 감지한다."""
     text = str(exc).lower()
