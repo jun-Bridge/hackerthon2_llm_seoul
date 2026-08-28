@@ -1,11 +1,20 @@
+<<<<<<< HEAD
 import { useState } from "react";
 import { useApp } from "../store/AppContext";
 import PageHeader from "../components/common/PageHeader";
 import ComplaintDetail from "../components/common/ComplaintDetail";
+=======
+import { useState } from 'react';
+import { useApp } from '../store/AppContext';
+import { formatDate } from '../store/constants';
+import ComplaintDetailModal from '../components/common/ComplaintDetailModal';
+import PageHeader from '../components/common/PageHeader';
+>>>>>>> 48e58d9597a200c22373ae87f3c87fdb954fbaee
 
 const FILTERS = ["전체", "처리중", "해결완료", "보류", "거절"];
 
 export default function StatusPage() {
+<<<<<<< HEAD
   const { complaints } = useApp();
   const list = complaints.length
     ? complaints
@@ -59,6 +68,18 @@ export default function StatusPage() {
   const [filter, setFilter] = useState("전체");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
+=======
+  const { complaints, refreshComplaints, replaceComplaint, removeComplaint } = useApp();
+  const [filter, setFilter] = useState('전체');
+  const [search, setSearch] = useState('');
+  const [openId, setOpenId] = useState(null);
+
+  // 내 민원이므로 철회가 여기서 일어난다. 철회되면 목록에서 빠진다.
+  const handleChanged = (u) => {
+    if (u.__withdrawn) { removeComplaint(u.id); refreshComplaints().catch(() => {}); }
+    else replaceComplaint(u);
+  };
+>>>>>>> 48e58d9597a200c22373ae87f3c87fdb954fbaee
 
   const myList = list.filter((c) => c.is_mine);
   const statusFiltered =
@@ -147,10 +168,25 @@ export default function StatusPage() {
 
         <div>
           {filtered.length === 0 ? (
+<<<<<<< HEAD
             <div
               style={{ textAlign: "center", padding: "3rem", color: "#94A3B8" }}
             >
               접수한 민원이 없습니다
+=======
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>접수한 민원이 없습니다</div>
+          ) : filtered.map(c => (
+            <div key={c.id} onClick={() => setOpenId(c.id)} style={{ padding: '16px 4px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: '9999px' }}>{c.category}</span>
+                  <span className={`status-pill status-${c.status}`}>{c.status}</span>
+                </div>
+                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0F172A', marginBottom: '4px', lineHeight: '1.4' }}>{c.title}</div>
+                <div style={{ fontSize: '0.78rem', color: '#94A3B8' }}>{c.location} · {formatDate(c.created_at)}</div>
+              </div>
+              <i className="bi bi-chevron-right" style={{ color: '#D1D5DB', fontSize: '1rem' }}></i>
+>>>>>>> 48e58d9597a200c22373ae87f3c87fdb954fbaee
             </div>
           ) : (
             filtered.map((c) => (
@@ -215,11 +251,20 @@ export default function StatusPage() {
         </div>
       </div>
 
+<<<<<<< HEAD
       {selected && (
         <ComplaintDetail
           complaint={selected}
           onClose={() => setSelectedId(null)}
           canWithdraw={true}
+=======
+      {openId != null && (
+        <ComplaintDetailModal
+          complaintId={openId}
+          isAdmin={false}
+          onClose={() => setOpenId(null)}
+          onChanged={handleChanged}
+>>>>>>> 48e58d9597a200c22373ae87f3c87fdb954fbaee
         />
       )}
     </div>

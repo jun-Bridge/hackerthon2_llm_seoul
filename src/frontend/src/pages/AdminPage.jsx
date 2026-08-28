@@ -1,26 +1,30 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppContext';
-import AdminDetailModal from '../components/common/AdminDetailModal';
+import { formatDate } from '../store/constants';
+import ComplaintDetailModal from '../components/common/ComplaintDetailModal';
 import PageHeader from '../components/common/PageHeader';
 
 export default function AdminPage() {
-  const { complaints, changeStatus } = useApp();
+  const { complaints, stats, refreshStats, replaceComplaint, removeComplaint } = useApp();
   const [selectedId, setSelectedId] = useState(null);
 
-  const proc = complaints.filter(c => c.status === '처리중').length;
-  const done = complaints.filter(c => c.status === '해결완료').length;
-  const hold = complaints.filter(c => c.status === '보류' || c.status === '거절').length;
+  // 통계는 백엔드 /admin/stats가 정본. 아직 못 받았으면 목록으로 임시 계산.
+  const by = stats?.by_status || {};
+  const total = stats?.total ?? complaints.length;
+  const proc = by['처리중'] ?? complaints.filter(c => c.status === '처리중').length;
+  const done = by['해결완료'] ?? complaints.filter(c => c.status === '해결완료').length;
+  const hold = (by['보류'] ?? complaints.filter(c => c.status === '보류').length)
+             + (by['거절'] ?? complaints.filter(c => c.status === '거절').length);
 
-  const handleOpen = (id) => {
-    // 자동 "미확인→확인" 전이
-    const item = complaints.find(c => c.id === id);
-    if (item && item.status === '미확인') {
-      changeStatus(id, '확인');
-    }
-    setSelectedId(id);
+  // 행 클릭 = 상세 열기. '미확인→확인' 전이는 서버가 openComplaint(POST)에서 처리한다.
+  const handleOpen = (id) => setSelectedId(id);
+
+  // 상세에서 상태가 바뀌면 목록의 그 행만 갈아끼우고 통계를 다시 받는다.
+  const handleChanged = (u) => {
+    if (u.__withdrawn) removeComplaint(u.id);
+    else replaceComplaint(u);
+    refreshStats().catch(() => {});
   };
-
-  const selectedComplaint = complaints.find(c => c.id === selectedId);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', background: '#FFFFFF', margin: '-10px -16px -80px', paddingBottom: '80px' }}>
@@ -30,7 +34,7 @@ export default function AdminPage() {
       {/* 통계 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', border: '1px solid #E2E8F0', borderRadius: '10px', overflow: 'hidden', background: '#FFFFFF' }}>
         {[
-          { l: '전체', v: complaints.length },
+          { l: '전체', v: total },
           { l: '처리중', v: proc },
           { l: '해결완료', v: done },
           { l: '보류/거절', v: hold }
@@ -53,16 +57,21 @@ export default function AdminPage() {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <span className={`status-pill status-${c.status}`} style={{ alignSelf: 'flex-start', fontSize: '0.7rem' }}>{c.status}</span>
               <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0F172A' }}>{c.title}</span>
-              <span style={{ fontSize: '0.78rem', color: '#94A3B8' }}>{c.location} · {c.timestamp}</span>
+              <span style={{ fontSize: '0.78rem', color: '#94A3B8' }}>{c.location} · {formatDate(c.created_at)}</span>
             </div>
             <i className="bi bi-chevron-right" style={{ color: '#D1D5DB' }}></i>
           </div>
         ))}
       </div>
 
-      {/* 상세 모달 */}
-      {selectedComplaint && (
-        <AdminDetailModal complaint={selectedComplaint} onClose={() => setSelectedId(null)} />
+      {/* 상세 모달 — 여는 순간 서버가 미확인→확인으로 전이시킨다 (POST open) */}
+      {selectedId != null && (
+        <ComplaintDetailModal
+          complaintId={selectedId}
+          isAdmin={true}
+          onClose={() => setSelectedId(null)}
+          onChanged={handleChanged}
+        />
       )}
       </div>
     </div>
