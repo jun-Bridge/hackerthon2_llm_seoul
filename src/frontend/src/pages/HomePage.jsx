@@ -8,23 +8,24 @@ export default function HomePage({ onOpenChat }) {
   const processing = myList.filter(c => c.status === '처리중').length;
   const done = myList.filter(c => c.status === '해결완료').length;
 
+  // label은 화면 표시용, category는 백엔드 정본 8종 중 하나(챗봇에 미리 잡아줌)
   const categories = [
-    { label: '냉난방', icon: 'bi-snow2' },
-    { label: '누수/위생', icon: 'bi-droplet' },
-    { label: '기자재', icon: 'bi-display' },
-    { label: '전기', icon: 'bi-lightning-charge' },
+    { label: '냉난방', icon: 'bi-snow2', category: '냉난방 / 공조' },
+    { label: '누수/위생', icon: 'bi-droplet', category: '위생 / 배관' },
+    { label: '기자재', icon: 'bi-display', category: '영상 / 기자재' },
+    { label: '전기', icon: 'bi-lightning-charge', category: '전기 / 설비' },
   ];
 
   return (
     <div className="home-page">
       <div className="greeting">안녕하세요, <span className="greeting-name">{user?.email?.split('@')[0] || 'student'}님</span></div>
 
-      <div className="input-trigger" onClick={onOpenChat}>
+      <div className="input-trigger" onClick={() => onOpenChat()}>
         <span>불편한 점을 편하게 적어주세요</span>
         <i className="bi bi-arrow-right" style={{ color: '#2563EB', fontWeight: 700 }}></i>
       </div>
 
-      <div className="anon-banner" onClick={onOpenChat}>
+      <div className="anon-banner" onClick={() => onOpenChat()}>
         <div>
           <div className="anon-title">100% 익명 보장</div>
           <div className="anon-sub">AI가 공문서로 변환해드려요</div>
@@ -33,7 +34,7 @@ export default function HomePage({ onOpenChat }) {
 
       <div className="cat-grid">
         {categories.map(c => (
-          <div key={c.label} className="cat-item" onClick={onOpenChat}>
+          <div key={c.label} className="cat-item" onClick={() => onOpenChat(c.category)}>
             <div className="cat-circle"><i className={`bi ${c.icon}`}></i></div>
             <span className="cat-label">{c.label}</span>
           </div>

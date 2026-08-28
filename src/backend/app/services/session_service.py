@@ -360,7 +360,13 @@ def send_message(session_id: int, user_id: int, text: str) -> RefineResultOut:
             raise ServiceContractError("llm.refine returned an invalid result")
 
         if not result.is_complete:
-            choices = merge_choices(result.missing, result.choices, category)
+            # 이미 학생이 보낸 발화(고른 칩 포함)는 다음 선택지에서 제외한다.
+            already = [
+                t.get("content", "")
+                for t in turns_with_student
+                if t.get("role") == "student"
+            ]
+            choices = merge_choices(result.missing, result.choices, category, exclude=already)
             repeat_count = chip_state.bump_if_same(session_id, result.missing)
             question = _question_with_examples(
                 result.question,

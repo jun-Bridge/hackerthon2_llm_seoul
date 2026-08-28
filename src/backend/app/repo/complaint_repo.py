@@ -130,10 +130,13 @@ def accept(conn, complaint_id: int, school_id: int) -> bool:
 
 
 def resolve(conn, complaint_id: int, school_id: int) -> bool:
-    """처리중 → 해결완료. WHERE status='처리중'. 확인에서 바로 못 온다 (불변식 #8)."""
+    """처리중·보류 → 해결완료. WHERE status IN ('처리중','보류').
+    확인에서 바로는 못 온다(먼저 수락 또는 보류를 거쳐야 함, 불변식 #8).
+    보류도 완료 버튼으로 해결완료가 될 수 있다.
+    """
     result = conn.execute(
         "UPDATE complaints SET status = '해결완료' "
-        "WHERE id = %s AND school_id = %s AND status = '처리중'",
+        "WHERE id = %s AND school_id = %s AND status IN ('처리중', '보류')",
         (complaint_id, school_id),
     )
     return result.rowcount > 0

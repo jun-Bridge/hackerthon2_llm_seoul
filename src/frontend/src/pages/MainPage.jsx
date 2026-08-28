@@ -13,7 +13,13 @@ export default function MainPage() {
   const { user, refreshComplaints, refreshStats } = useApp();
   const [tab, setTab] = useState('home');
   const [chatOpen, setChatOpen] = useState(false);
+  const [initialCategory, setInitialCategory] = useState(null);  // 카테고리 프리셋(홈 아이콘 클릭 시)
   const isAdmin = user?.role === 'admin';
+
+  const openChat = (category = null) => {
+    setInitialCategory(typeof category === 'string' ? category : null);
+    setChatOpen(true);
+  };
 
   // 로그인 직후 실제 게시판 목록을 백엔드에서 받아온다. 관리자면 통계도.
   useEffect(() => {
@@ -32,12 +38,12 @@ export default function MainPage() {
 
   const renderPage = () => {
     switch (tab) {
-      case 'home': return <HomePage onOpenChat={() => setChatOpen(true)} />;
+      case 'home': return <HomePage onOpenChat={openChat} />;
       case 'status': return <StatusPage />;
       case 'board': return <BoardPage />;
       case 'admin': return <AdminPage />;
       case 'profile': return <ProfilePage />;
-      default: return <HomePage onOpenChat={() => setChatOpen(true)} />;
+      default: return <HomePage onOpenChat={openChat} />;
     }
   };
 
@@ -45,8 +51,8 @@ export default function MainPage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'transparent' }}>
       {tab !== 'profile' && <Header onProfileClick={() => setTab('profile')} />}
       <div className="page-body">{renderPage()}</div>
-      <BottomNav currentTab={tab} onTabChange={setTab} isAdmin={isAdmin} onFabClick={() => setChatOpen(true)} />
-      {chatOpen && <ChatModal onClose={handleChatClose} />}
+      <BottomNav currentTab={tab} onTabChange={setTab} isAdmin={isAdmin} onFabClick={() => openChat()} />
+      {chatOpen && <ChatModal initialCategory={initialCategory} onClose={handleChatClose} />}
     </div>
   );
 }

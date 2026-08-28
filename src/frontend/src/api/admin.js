@@ -8,7 +8,8 @@ export const acceptComplaint = (id) => request("POST", `/admin/complaints/${id}/
 export const resolveComplaint = (id) => request("POST", `/admin/complaints/${id}/resolve`); // 처리중 → 해결완료
 export const holdComplaint = (id, reason) =>
   request("POST", `/admin/complaints/${id}/hold`, { body: { reason } }); // 확인 → 보류 (사유 필수)
-export const rejectComplaint = (id) => request("POST", `/admin/complaints/${id}/reject`); // 확인 → 거절
+export const rejectComplaint = (id, reason) =>
+  request("POST", `/admin/complaints/${id}/reject`, { body: { reason } }); // 확인 → 거절 (사유 필수)
 export const addComment = (id, content) =>
   request("POST", `/admin/complaints/${id}/comments`, { body: { content } });
 export const getBedrockLogs = (limit = 50) =>

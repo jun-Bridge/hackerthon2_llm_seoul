@@ -61,10 +61,12 @@ def hold_complaint(
     return complaint_service.hold(complaint_id, user.school_id, user.user_id, body.reason)
 
 
-# ── #21 확인 → 거절 ───────────────────────────────────────────────
+# ── #21 확인 → 거절 (+ 필수 사유) ────────────────────────────────
 @router.post("/complaints/{complaint_id}/reject", response_model=ComplaintOut)
-def reject_complaint(complaint_id: int, user: CurrentUser = Depends(require_admin)):
-    return complaint_service.reject(complaint_id, user.school_id)
+def reject_complaint(
+    complaint_id: int, body: HoldIn, user: CurrentUser = Depends(require_admin)
+):
+    return complaint_service.reject(complaint_id, user.school_id, user.user_id, body.reason)
 
 
 # ── #22 코멘트 추가 (추가된 코멘트 1건, 201) ────────────────────

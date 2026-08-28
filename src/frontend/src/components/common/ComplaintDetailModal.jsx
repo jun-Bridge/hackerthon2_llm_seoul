@@ -43,12 +43,17 @@ export default function ComplaintDetailModal({ complaintId, isAdmin, onClose, on
   // 관리자 상태 전이
   const onAccept = () => doAction(() => acceptComplaint(complaintId));
   const onResolve = () => doAction(() => resolveComplaint(complaintId));
-  const onReject = () => doAction(() => rejectComplaint(complaintId));
   const onHold = () => {
     const reason = window.prompt('보류 사유를 입력하세요 (필수)');
     if (reason == null) return;
     if (!reason.trim()) { alert('보류 사유는 필수입니다.'); return; }
     doAction(() => holdComplaint(complaintId, reason.trim()));
+  };
+  const onReject = () => {
+    const reason = window.prompt('거절 사유를 입력하세요 (필수)');
+    if (reason == null) return;
+    if (!reason.trim()) { alert('거절 사유는 필수입니다.'); return; }
+    doAction(() => rejectComplaint(complaintId, reason.trim()));
   };
   const onComment = () => {
     const content = window.prompt('코멘트를 입력하세요');
@@ -141,7 +146,8 @@ export default function ComplaintDetailModal({ complaintId, isAdmin, onClose, on
                   <button style={btn('#D97706')} disabled={busy} onClick={onHold}>보류</button>
                   <button style={btn('#DC2626')} disabled={busy} onClick={onReject}>거절</button>
                 </>}
-                {st === '처리중' && <button style={btn('#16A34A')} disabled={busy} onClick={onResolve}>해결 완료</button>}
+                {/* 처리중·보류 모두 완료 버튼으로 해결완료로 전이 */}
+                {(st === '처리중' || st === '보류') && <button style={btn('#16A34A')} disabled={busy} onClick={onResolve}>해결 완료</button>}
                 <button style={{ ...btn('#475569'), flex: '0 0 100%' }} disabled={busy} onClick={onComment}>코멘트 추가</button>
               </div>
             )}

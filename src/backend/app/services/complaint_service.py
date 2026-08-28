@@ -148,11 +148,24 @@ def hold(complaint_id: int, school_id: int, author_user_id: int, reason: str) ->
         return _admin_detail(conn, complaint_id, school_id)
 
 
-def reject(complaint_id: int, school_id: int) -> ComplaintOut:
-    """확인→거절. 조건 불일치는 원자적으로 409로 변환한다."""
+def reject(complaint_id: int, school_id: int, author_user_id: int, reason: str) -> ComplaintOut:
+    """확인→거절과 필수 사유 저장을 하나의 트랜잭션으로 처리한다.
+    거절도 사유가 필수다(보류와 동일). 사유 없는 거절이 남지 않게 한 트랜잭션으로 묶는다.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        raise HoldReasonRequiredError("거절 사유를 입력해야 합니다.")
+    normalized_reason = reason.strip()
+
     with pool.transaction() as conn:
         if not complaint_repo.reject(conn, complaint_id, school_id):
             raise InvalidTransitionError("처리할 수 없는 민원 상태입니다.")
+        comment_repo.add(
+            conn,
+            complaint_id,
+            author_user_id,
+            normalized_reason,
+            is_hold_reason=False,   # 거절 사유는 보류 사유가 아니므로 일반 코멘트로
+        )
         return _admin_detail(conn, complaint_id, school_id)
 
 

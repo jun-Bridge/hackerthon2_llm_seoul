@@ -4,9 +4,11 @@ import { ApiError } from '../../api/client';
 
 // 실제 백엔드 대화 세션과 연동된 챗봇.
 // 흐름: createSession → sendMessage(Bedrock) 반복 → is_complete면 preview → 확인창 → submitSession
-export default function ChatModal({ onClose }) {
+export default function ChatModal({ onClose, initialCategory = null }) {
   const [messages, setMessages] = useState([
-    { sender: 'bot', text: '안녕하세요! 다듬이 AI에요.\n어떤 불편이 있으셨나요? 편하게 말씀해 주세요.' },
+    initialCategory
+      ? { sender: 'bot', text: `'${initialCategory}' 관련 불편이시군요.\n어디서 어떤 문제가 있었는지 편하게 말씀해 주세요.` }
+      : { sender: 'bot', text: '안녕하세요! 다듬이 AI에요.\n어떤 불편이 있으셨나요? 편하게 말씀해 주세요.' },
   ]);
   const [input, setInput] = useState('');
   const [sessionId, setSessionId] = useState(null);
@@ -17,24 +19,28 @@ export default function ChatModal({ onClose }) {
 
   useEffect(() => { scrollRef.current?.scrollTo(0, 99999); }, [messages]);
 
-  // 세션은 처음 열 때 한 번 생성
+  // 세션은 처음 열 때 한 번 생성.
+  // 카테고리 프리셋은 안내 문구로만 힌트를 준다(위 초기 메시지). 자동 발화는 하지 않는다
+  // — 안내 + 자동전송이 이중으로 뜨면 지저분하므로, 사용자가 직접 첫 메시지를 치게 한다.
   useEffect(() => {
     createSession()
       .then((r) => setSessionId(r.session_id))
       .catch(() => addBot('세션을 시작하지 못했습니다. 다시 시도해 주세요.'));
+    // eslint-disable-next-line
   }, []);
 
   const addBot = (text, extra = {}) => setMessages(prev => [...prev, { sender: 'bot', text, ...extra }]);
   const addUser = (text) => setMessages(prev => [...prev, { sender: 'user', text }]);
 
-  const doSend = async (text) => {
-    if (!text.trim() || busy || !sessionId) return;
+  const doSend = async (text, sidOverride = null) => {
+    const sid = sidOverride || sessionId;
+    if (!text.trim() || busy || !sid) return;
     addUser(text);
     setInput('');
     setChoices(null);
     setBusy(true);
     try {
-      const r = await sendMessage(sessionId, text);   // ← 실제 Bedrock 호출
+      const r = await sendMessage(sid, text);   // ← 실제 Bedrock 호출
       if (r.is_complete) {
         setPreview(r.preview);
         const p = r.preview || {};
