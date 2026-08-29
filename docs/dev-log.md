@@ -925,3 +925,31 @@ FastAPI+React 캔버스 편집 서비스의 잔재라 UniVoice 계층 구조와 
   - `llm/client.py _REFINE_MAX_TOKENS` 1024 → 2048. 실서버 학생 대화 3건(8턴) 전부 200, 502 재발 없음.
 - **문서 실배포 반영(이 커밋)**: 초기 계획(RDS/ElastiCache 관리형)과 실제 배포가 달랐다 — 실제는 **EC2 한 대에 PostgreSQL·Redis 직접 설치**, systemd `univoice`(user `ubuntu`, workers 2, 8501), 리전 `ap-northeast-2` 코드 고정, `.env`는 4키(DATABASE_URL·REDIS_URL·LLM_MODEL_ID·PORT)뿐(AWS_REGION 넣으면 pydantic extra_forbidden으로 기동 실패).
   - `docs/aws-deployment.md`를 실제 구성·재배포 절차로 전면 개정. `docs/README.md`의 SSoT 경로를 `.kiro/specs/complaint-assistant/requirements.md`로 정정. `backend-design.md`의 카테고리 "7종→8종", 리전/`max_tokens` 서술을 실제 코드에 맞춤.
+
+## [2026-08-29] 프론트 연동이 두 번 파괴된 건 — 원인 규명 및 복구
+
+**전문은 `docs/postmortem-frontend-integration.md`.** 여기에는 결론만 남긴다.
+
+- **원인은 버그가 아니라 머지 사고다.** `c235c74` 시점에 이미 백엔드에 연결돼 있던
+  `ChatModal.jsx`를 UI 브랜치가 목업으로 다시 썼고, `2ea3818`("keep frontend UI changes")이
+  그것을 채택하면서 연동이 사라졌다. `48e58d9`로 복구했으나, 두 번째 UI 브랜치(`9020f23`)가
+  복구 이전 상태(`2ea3818`) 위에서 갈라져 나와 3,650줄을 쌓았고, `3853913`이 그 머지 충돌을
+  **마커째 커밋**해 원격 main에서 `npm run build`가 실패하는 상태가 됐다.
+- **UI 커밋 4개 전부 `src/frontend/src/api/`를 건드리지 않았다.** 계약은 그대로 두고 그것을
+  쓰는 쪽만 갈아엎어, 두 작업이 서로를 모르는 채 같은 파일에서 갈라졌다.
+- **폴백이 실패를 가렸다.** `applyDemoUser`(세션 없이 setUser만), `listSchools` 실패 시
+  `DEMO_SCHOOL`, 빈 목록이면 `demoComplaints` — 화면이 항상 정상으로 보여 "연동이 안 됨"이
+  "가끔 이상함"으로 보였다. 특히 가입 화면 기본 선택이 `DEMO_SCHOOL`이라 **가입 버튼이
+  `signup`을 한 번도 부르지 않았다.**
+- **`npm run build` 성공은 아무것도 보증하지 않는다.** 번들링만 하고 스코프를 검사하지 않아
+  `ChatModal`의 미정의 참조 `busy`를 통과시켰다 — 렌더 시 ReferenceError로 챗 모달 전체가
+  죽어 "+"를 눌러도 아무것도 뜨지 않고 접수가 불가능했다. 프론트 전체를 AST로 훑어 정정했다.
+- **교직원 인증**은 대응 엔드포인트가 없어 한 번 UI째 삭제했는데, 이는 최소변경이 아니라
+  기능 제거였다. 복원하고 `POST /auth/admin-code`를 신설해 연결했다. 코드 대조는 소속 학교로
+  한정하고(격리), 역할이 Redis 세션에도 있으므로 승격 시 세션을 재발급한다.
+- **재발 방지는 아직 적용하지 않았다**(합의 필요): 충돌 마커 pre-commit 훅, 빌드 후 AST
+  스코프 검사, 폴백 금지, `api/` 밖 `fetch` 금지 CI, 프론트 소유권 경계 정의
+  (`team-split.md`에 프론트 경계가 없다 — 그래서 같은 파일을 두 사람이 다시 썼다).
+
+**영향받은 파일**: `docs/postmortem-frontend-integration.md`(신설), `docs/README.md`(색인).
+복구 커밋은 `48e58d9`·`ec31971`.

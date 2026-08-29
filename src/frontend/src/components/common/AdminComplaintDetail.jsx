@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useToast } from "./Toast";
 import PageHeader from "./PageHeader";
+import { getComplaintConversation } from "../../api/board";
 
 const STATUSES = ["확인", "처리중", "해결완료", "보류", "거절"];
 
-// 현재 상태에서 전이 가능한 상태 목록
+// 현재 상태에서 전이 가능한 상태 목록.
+// '미확인 → 확인'은 여기 없다 — 버튼이 아니라 상세 열람(POST open)의 부작용이고,
+// 이 화면이 열릴 때 이미 서버가 전이시킨 뒤다. 넣어두면 눌러도 아무 일이 없는 버튼이 된다.
 function getAvailableStatuses(current) {
   switch (current) {
-    case "미확인": return ["확인"];
     case "확인": return ["처리중", "보류", "거절"];
     case "처리중": return ["해결완료"];
     case "보류": return ["해결완료"];
@@ -29,7 +31,29 @@ export default function AdminComplaintDetail({ complaint, onClose, onStatusChang
   });
   const [comment, setComment] = useState("");
 
+  // 학생 원문(AI와의 대화 왕복) — 접수 근거라 관리자가 판단 전에 봐야 한다.
+  const [conversation, setConversation] = useState(null);
+  const [showConv, setShowConv] = useState(false);
+  const [convLoading, setConvLoading] = useState(false);
+
   if (!complaint) return null;
+
+  const toggleConversation = async () => {
+    if (conversation) {
+      setShowConv((v) => !v);
+      return;
+    }
+    setConvLoading(true);
+    try {
+      const rows = await getComplaintConversation(complaint.id);
+      setConversation(rows || []);
+      setShowConv(true);
+    } catch (e) {
+      showToast(e?.message || "학생 원문을 불러오지 못했습니다.");
+    } finally {
+      setConvLoading(false);
+    }
+  };
 
   const handleChangeStatus = () => {
     onStatusChange?.(complaint.id, selectedStatus, comment);
@@ -189,9 +213,55 @@ export default function AdminComplaintDetail({ complaint, onClose, onStatusChang
         <div style={{ border: "1px solid #E2E8F0", borderRadius: "12px", padding: "16px" }}>
           <div style={{ fontSize: "0.92rem", fontWeight: 800, color: "#0F172A", marginBottom: "10px" }}>민원 내용</div>
           <div style={{ fontSize: "0.86rem", color: "#334155", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-            {complaint.rawText || complaint.body || complaint.summary || complaint.title}
+            {complaint.body || complaint.rawText || complaint.summary || complaint.title}
           </div>
         </div>
+
+        {/* 학생 원문 — AI가 다듬기 전 대화 전체 */}
+        <button
+          onClick={toggleConversation}
+          disabled={convLoading}
+          style={{
+            width: "100%",
+            padding: "11px",
+            borderRadius: "10px",
+            background: "#F1F5F9",
+            border: "none",
+            fontSize: "0.84rem",
+            fontWeight: 700,
+            color: "#475569",
+            cursor: convLoading ? "default" : "pointer",
+          }}
+        >
+          {convLoading ? "불러오는 중…" : showConv ? "학생 원문 접기" : "학생 원문 보기"}
+        </button>
+
+        {showConv && conversation && (
+          <div
+            style={{
+              background: "#F8FAFC",
+              border: "1px solid #E2E8F0",
+              borderRadius: "12px",
+              padding: "14px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "10px",
+            }}
+          >
+            {conversation.length === 0 ? (
+              <div style={{ fontSize: "0.84rem", color: "#94A3B8" }}>대화 기록이 없습니다</div>
+            ) : (
+              conversation.map((t, i) => (
+                <div key={i} style={{ fontSize: "0.84rem", lineHeight: 1.6 }}>
+                  <span style={{ fontWeight: 800, color: t.role === "student" ? "#0F172A" : "#2563EB" }}>
+                    {t.role === "student" ? "학생" : "다듬이"}
+                  </span>
+                  <span style={{ color: "#334155", whiteSpace: "pre-wrap" }}> {t.content}</span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {/* 상태 전이 팝업 */}

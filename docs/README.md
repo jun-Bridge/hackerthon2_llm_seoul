@@ -13,6 +13,7 @@
 - `aws-deployment.md` — **실제 배포 방식.** EC2 단일 인스턴스에 PostgreSQL·Redis 직접 설치, systemd(`univoice`)로 8501 서빙. 재배포 절차 포함.
 - `data-layer-usage.md` — 서비스가 `pool`·`repo`·`session`을 부르는 표준 패턴.
 - `e2e-scenario-log.md` — 실서버 종단 시나리오 기록.
+- `postmortem-frontend-integration.md` — **사후 분석.** 연동된 프론트 코드가 목업으로 두 번 덮어써진 건. 원인·증상 대응표·재발 방지.
 - `dev-log.md` — **과정 기록. append-only.** 결정과 이유, 시도·막힘. 과거 항목은 수정하지 않는다.
 
 ## 계획·히스토리 (과거 버전 — 참고용)

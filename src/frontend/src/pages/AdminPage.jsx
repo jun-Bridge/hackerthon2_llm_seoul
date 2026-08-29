@@ -33,19 +33,25 @@ export default function AdminPage({ onBack }) {
   };
 
   // 상태 전이 — 상태에 맞는 API 호출
-  const handleStatusChange = async (id, newStatus) => {
+  // 상세 모달이 코멘트 입력값을 세 번째 인자로 넘겨준다. 거기 적었으면 그것을 사유로 쓰고,
+  // 비어 있을 때만 prompt로 되묻는다 — 적어놓고도 또 물어보면 두 번 쓰게 된다.
+  const handleStatusChange = async (id, newStatus, typedReason = "") => {
     try {
       let updated;
+      const askReason = (label) => {
+        const r = (typedReason || "").trim();
+        return r || (window.prompt(`${label} 사유를 입력하세요 (필수)`) || "").trim();
+      };
       if (newStatus === "처리중") updated = await acceptComplaint(id);
       else if (newStatus === "해결완료") updated = await resolveComplaint(id);
       else if (newStatus === "보류") {
-        const reason = window.prompt("보류 사유를 입력하세요 (필수)");
-        if (!reason || !reason.trim()) return;
-        updated = await holdComplaint(id, reason.trim());
+        const reason = askReason("보류");
+        if (!reason) return;
+        updated = await holdComplaint(id, reason);
       } else if (newStatus === "거절") {
-        const reason = window.prompt("거절 사유를 입력하세요 (필수)");
-        if (!reason || !reason.trim()) return;
-        updated = await rejectComplaint(id, reason.trim());
+        const reason = askReason("거절");
+        if (!reason) return;
+        updated = await rejectComplaint(id, reason);
       }
       if (updated) {
         replaceComplaint(updated);

@@ -1,13 +1,55 @@
+import { useState, useEffect } from "react";
 import { useApp } from "../../store/AppContext";
 import { useToast } from "./Toast";
 import PageHeader from "./PageHeader";
 import { verifyPassword } from "../../api/auth";
+import { getComplaint, getComplaintConversation } from "../../api/board";
 
 export default function ComplaintDetail({ complaint, onClose, canWithdraw }) {
   const { deleteComplaint } = useApp();
   const { showToast } = useToast();
 
+  // 목록 응답의 comments에는 보류 사유만 담겨 온다(계약 0장). 코멘트 전체를 보려면
+  // 상세를 따로 받아야 한다.
+  const [detail, setDetail] = useState(null);
+  const [conversation, setConversation] = useState(null);
+  const [showConv, setShowConv] = useState(false);
+  const [convLoading, setConvLoading] = useState(false);
+
+  const cid = complaint?.id;
+  useEffect(() => {
+    if (cid == null) return;
+    let alive = true;
+    getComplaint(cid)
+      .then((d) => alive && setDetail(d))
+      .catch(() => {}); // 실패해도 목록 데이터로 계속 보여준다
+    return () => {
+      alive = false;
+    };
+  }, [cid]);
+
   if (!complaint) return null;
+
+  const view = detail || complaint;
+  const comments = view.comments || [];
+
+  // 원문 보기 — 학생-AI 대화 전체를 시간순으로. 한 번 받아오면 토글만 한다.
+  const toggleConversation = async () => {
+    if (conversation) {
+      setShowConv((v) => !v);
+      return;
+    }
+    setConvLoading(true);
+    try {
+      const rows = await getComplaintConversation(cid);
+      setConversation(rows || []);
+      setShowConv(true);
+    } catch (e) {
+      showToast(e?.message || "원문을 불러오지 못했습니다.");
+    } finally {
+      setConvLoading(false);
+    }
+  };
 
   // 철회는 되돌릴 수 없어서 정본이 3단계를 요구한다(요구사항 2.11~2.12):
   // ① 경고 + 비밀번호 → ② 비밀번호가 맞아야 최종 확인창 → ③ 실행.
@@ -176,9 +218,93 @@ export default function ComplaintDetail({ complaint, onClose, canWithdraw }) {
                 whiteSpace: "pre-wrap",
               }}
             >
-              {complaint.rawText || complaint.summary || complaint.title}
+              {view.body || view.rawText || view.summary || view.title}
             </div>
           </div>
+
+          {/* 관리자 코멘트 — 보류 사유는 강조해서 구분한다 */}
+          {comments.length > 0 && (
+            <div
+              style={{
+                border: "1px solid #E2E8F0",
+                borderRadius: "14px",
+                padding: "14px 16px",
+                background: "#FFFFFF",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: "0.82rem",
+                  fontWeight: 800,
+                  color: "#0F172A",
+                  marginBottom: "10px",
+                }}
+              >
+                관리자 코멘트
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {comments.map((c) => (
+                  <div key={c.id} style={{ fontSize: "0.85rem", lineHeight: "1.6" }}>
+                    {c.is_hold_reason && (
+                      <span style={{ color: "#D97706", fontWeight: 800 }}>[보류 사유] </span>
+                    )}
+                    <span style={{ color: "#374151" }}>{c.content}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 원문 보기 — 학생-AI 대화 왕복 전체 */}
+          <button
+            onClick={toggleConversation}
+            disabled={convLoading}
+            style={{
+              width: "100%",
+              padding: "11px",
+              borderRadius: "10px",
+              background: "#F1F5F9",
+              border: "none",
+              fontSize: "0.84rem",
+              fontWeight: 700,
+              color: "#475569",
+              cursor: convLoading ? "default" : "pointer",
+            }}
+          >
+            {convLoading ? "불러오는 중…" : showConv ? "원문 접기" : "AI와의 대화 원문 보기"}
+          </button>
+
+          {showConv && conversation && (
+            <div
+              style={{
+                background: "#F8FAFC",
+                border: "1px solid #E2E8F0",
+                borderRadius: "14px",
+                padding: "14px 16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "10px",
+              }}
+            >
+              {conversation.length === 0 ? (
+                <div style={{ fontSize: "0.84rem", color: "#94A3B8" }}>대화 기록이 없습니다</div>
+              ) : (
+                conversation.map((t, i) => (
+                  <div key={i} style={{ fontSize: "0.84rem", lineHeight: "1.6" }}>
+                    <span
+                      style={{
+                        fontWeight: 800,
+                        color: t.role === "student" ? "#0F172A" : "#2563EB",
+                      }}
+                    >
+                      {t.role === "student" ? "학생" : "다듬이"}
+                    </span>
+                    <span style={{ color: "#374151", whiteSpace: "pre-wrap" }}> {t.content}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
 
           {/* 철회 버튼 (본인 민원만) */}
           {canWithdraw && (

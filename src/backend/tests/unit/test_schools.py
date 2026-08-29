@@ -2,6 +2,9 @@
 
 서비스할 5개 학교(조선대·순천대·군산대·전남대·전북대)가 시드에 정확히 들어 있고,
 도메인 형식·중복·코드 무결성이 지켜지는지 못박는다. 실 DB 없이 순수 데이터로 검증.
+
+데모용 가상 대학(한국대학교)은 실학교와 분리해 검사한다 — 실서비스로 갈 때
+시드에서 빼야 하는 항목이라 그 경계를 테스트가 기억하고 있어야 한다.
 """
 import pytest
 
@@ -17,10 +20,19 @@ EXPECTED = {
     "전북대학교": "jbnu.ac.kr",
 }
 
+# 데모·시연 전용. 실재하지 않는 학교이므로 실서비스 전환 시 제거 대상.
+DEMO = {"한국대학교": "hanguk.ac.kr"}
+
 
 def test_seed_has_exactly_the_five_service_schools():
     got = {name: domain for name, domain, _, _ in seed_schools.SCHOOLS}
-    assert got == EXPECTED
+    assert {k: v for k, v in got.items() if k not in DEMO} == EXPECTED
+
+
+def test_seed_demo_school_is_exactly_the_known_one():
+    """가상 대학이 늘어나면 여기서 걸린다 — 실학교 목록에 슬쩍 섞이는 것을 막는다."""
+    got = {name: domain for name, domain, _, _ in seed_schools.SCHOOLS}
+    assert {k: v for k, v in got.items() if k in DEMO} == DEMO
 
 
 def test_seed_data_passes_integrity_validation():
