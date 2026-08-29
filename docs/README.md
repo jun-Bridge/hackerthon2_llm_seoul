@@ -11,7 +11,9 @@
 ## 운영·사용 문서
 
 - `aws-deployment.md` — **실제 배포 방식.** EC2 단일 인스턴스에 PostgreSQL·Redis 직접 설치, systemd(`univoice`)로 8501 서빙. 재배포 절차 포함.
+- `claude_handover.md` — **손으로 무엇을 어떤 순서로 치는가.** 접속 → 코드 반영 → 빌드 → 재시작 → 검증. 자주 걸리는 함정 목록 포함.
 - `data-layer-usage.md` — 서비스가 `pool`·`repo`·`session`을 부르는 표준 패턴.
+- `frontend-image-attach.md` — 채팅 이미지 첨부의 프론트 규격(`sendMessage`에 `image` optional). 리사이즈는 서버가 한다.
 - `e2e-scenario-log.md` — 실서버 종단 시나리오 기록.
 - `postmortem-frontend-integration.md` — **사후 분석.** 연동된 프론트 코드가 목업으로 두 번 덮어써진 건. 원인·증상 대응표·재발 방지.
 - `dev-log.md` — **과정 기록. append-only.** 결정과 이유, 시도·막힘. 과거 항목은 수정하지 않는다.
@@ -19,7 +21,8 @@
 ## 계획·히스토리 (과거 버전 — 참고용)
 
 - `proposal_v1.md`, `requirements_v1.md` — 초기 제안·요구안. **정본보다 앞선 버전**이라 상태값·카테고리가 다르다. 현재 정본은 위 `.kiro/specs/...`.
-- `roadmap-B-data-layer.md`, `team-split.md` — 팀 분담·로드맵.
-- `anonymous_complain_assistant*.html` — 초기 UI 목업. 정본보다 앞선 버전.
+- `roadmap-B-data-layer.md`, `team-split.md` — 팀 분담·로드맵. 백엔드 분담대로 구현이 끝났고, 지금은 소유권 기록으로 읽는다.
+- `anonymous_complain_assistant*.html` — 초기 UI 목업. **정본보다 앞선 버전이라 상태값이 4종뿐이다**(정본은 7종). 그대로 옮기면 어긋난다 — 차이는 `api-contract.md` 8장.
+- `demo-animation.html` — 발표용 애니메이션. 제품 코드와 무관.
 
 규칙: 스펙은 requirements(.kiro), 경계는 api-contract, 내부는 backend-design, 이유는 dev-log. 섞지 않는다.

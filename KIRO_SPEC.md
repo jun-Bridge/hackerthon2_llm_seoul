@@ -16,17 +16,16 @@ docs/
 ├─ requirements_v1.md              v1 설계 — 동결, 원칙 참조용
 └─ proposal_v1.md                  v1 제안서 — 동결
 
-src/backend/                       ★ 백엔드 코드 (팀 분담 스캐폴드 완료)
+src/backend/                       ★ 백엔드 코드
 ├─ app/README.md                   계층 규칙·폴더별 책임
 ├─ app/INTERFACES.md               ★ 모듈 간 호출 계약 (누가 무엇을 부르는가)
-├─ app/{api,services,repo,session,llm,core,schemas}/   계층별 스텁 (raise NotImplementedError)
-src/frontend/src/api/              ★ 프론트 API 클라이언트 (client + 도메인 4모듈 스텁)
+├─ app/{api,services,repo,session,llm,core,schemas}/   계층별 구현 (전부 동작)
+src/frontend/src/api/              ★ 프론트 API 클라이언트 (client + 도메인 4모듈)
 ```
 
 **구현을 시작한다면** `docs/api-contract.md`(HTTP 경계)와 `src/backend/app/INTERFACES.md`
-(모듈 간 계약)를 먼저 본다. 스텁 파일이 이미 함수 시그니처를 박아뒀으므로 팀원은 담당
-폴더의 `raise NotImplementedError` 본문만 채우면 되고, 두 쪽이 서로를 기다리지 않는다.
-**시그니처를 바꿔야 하면 계약 문서와 스텁을 먼저 고치고 알린다.**
+(모듈 간 계약)를 먼저 본다. 스텁으로 시작했지만 지금은 전 계층이 구현·검증돼 실서버에서 돈다.
+**시그니처를 바꿔야 하면 계약 문서와 호출부를 먼저 고치고 알린다.**
 
 **기능이 왜 그런지 궁금하면** `.kiro/specs/complaint-assistant/requirements.md`.
 

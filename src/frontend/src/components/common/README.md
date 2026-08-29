@@ -1,7 +1,22 @@
-# components/common/ — 공용 프리미티브
+# components/common/ — 공용 컴포넌트
 
-도메인을 모르는 UI 조각만. 여기 있는 건 chat도 canvas도 쓸 수 있어야 한다.
+| 파일 | 무엇 |
+|---|---|
+| `ComplaintDetail.jsx` | **학생용 민원 상세.** 코멘트 + AI 대화 원문 + 철회 |
+| `AdminComplaintDetail.jsx` | **관리자용 상세.** 상태 전이 + 코멘트 + 학생 원문 |
+| `PageHeader.jsx` | 화면 상단 제목/뒤로가기 |
+| `Header.jsx` · `BottomNav.jsx` | 홈 헤더 · 하단 탭(학생에게만 FAB) |
+| `Toast.jsx` | `ToastProvider` + `useToast()` |
 
-구현 예정: `Button` · `IconButton` · `Modal` · `Tooltip` · `Spinner` · `SplitPane`(2단 레이아웃 리사이즈)
+## 상세 화면이 지켜야 하는 것
 
-도메인 용어(문서·메시지·버전)가 등장하면 이 폴더가 아니다.
+- **목록 응답의 `comments`에는 보류 사유만 담겨 온다**(계약 0장). 코멘트 전체를 보여주려면
+  상세를 열 때 `getComplaint(id)`를 따로 받아야 한다. 목록 데이터로 "코멘트 N개"를 세면 틀린다.
+- **상태 전이 버튼은 백엔드 전이표와 같아야 한다.** `확인`→처리중/보류/거절,
+  `처리중`·`보류`→해결완료. `미확인`→`확인`은 버튼이 아니라 상세 열람(`POST open`)의
+  부작용이라 여기 없다. 어긋나면 버튼은 보이는데 서버가 409로 막는다.
+- **보류·거절은 사유가 필수다.** 빈 값으로 보내면 서버가 422를 준다.
+- **철회는 3단계다.** ① 비밀번호 확인 → ② 최종 확인창 → ③ 실행. 순서를 바꾸면
+  "정말 삭제?"에 확인한 뒤에야 비밀번호가 틀렸다는 걸 알게 된다.
+
+`ComplaintDetailModal.jsx`·`AdminDetailModal.jsx`는 현재 아무도 쓰지 않는 이전 버전이다.

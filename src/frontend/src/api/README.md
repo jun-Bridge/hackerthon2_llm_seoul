@@ -9,7 +9,7 @@
 | 파일 | 담당 | 백엔드 짝 |
 |---|---|---|
 | `client.js` | fetch 래퍼 — credentials·CSRF 헤더·오류 정규화. **여기만 fetch를 안다** | — |
-| `auth.js` | 가입·로그인·로그아웃·내 정보·비밀번호·탈퇴 (7개) | `routes/auth.py`, `routes/schools.py` |
+| `auth.js` | 학교 목록·가입·로그인·로그아웃·내 정보·비밀번호·탈퇴·비밀번호 확인·교직원 인증 (9개) | `routes/auth.py`, `routes/schools.py` |
 | `session.js` | 대화 세션 — 생성·목록·조회·메시지·접수 (5개) | `routes/session.py` |
 | `board.js` | 게시판 — 목록·상세·원문·철회 (4개) | `routes/board.py` |
 | `admin.js` | 관리자 — 통계·열람·상태전이·코멘트·로그 (8개) | `routes/admin.py` |

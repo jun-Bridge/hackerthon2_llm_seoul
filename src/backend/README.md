@@ -39,8 +39,8 @@ api/routes  →  services  →  repo / session / llm
 ## 팀 분담 (폴더 단위로 나눠 작업)
 
 각 폴더는 `INTERFACES.md`의 시그니처만 지키면 독립적으로 구현·테스트할 수 있다.
-스텁 파일(`raise NotImplementedError`)이 이미 시그니처를 박아뒀으므로, 담당자는
-그 함수 본문만 채우면 된다. **시그니처를 바꿔야 하면 `INTERFACES.md`와 스텁을 먼저
+초기에는 스텁(`raise NotImplementedError`)으로 시그니처만 박아뒀지만, 지금은
+전 계층이 구현돼 있다. **시그니처를 바꿔야 하면 `INTERFACES.md`와 스텁을 먼저
 고치고 알린다** — 다른 사람의 호출부가 깨지기 때문.
 
 | 담당 영역 | 폴더 | 선행 지식 |
