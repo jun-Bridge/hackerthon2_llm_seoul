@@ -1,5 +1,6 @@
 import { useApp } from "../../store/AppContext";
 import { useToast } from "./Toast";
+import PageHeader from "./PageHeader";
 import { verifyPassword } from "../../api/auth";
 
 export default function ComplaintDetail({ complaint, onClose, canWithdraw }) {
@@ -43,9 +44,9 @@ export default function ComplaintDetail({ complaint, onClose, canWithdraw }) {
   return (
     <div
       style={{
-        position: "fixed",
+        position: "absolute",
         inset: 0,
-        background: "rgba(15, 23, 42, 0.18)",
+        background: "#FFFFFF",
         zIndex: 250,
         display: "flex",
         justifyContent: "center",
@@ -57,50 +58,14 @@ export default function ComplaintDetail({ complaint, onClose, canWithdraw }) {
           width: "100%",
           maxWidth: "430px",
           height: "100%",
-          background: "#FFFFFF",
+          background: "transparent",
           display: "flex",
           flexDirection: "column",
           overflowY: "auto",
-          boxShadow: "0 0 0 1px rgba(226, 232, 240, 0.8)",
         }}
       >
         {/* 헤더 */}
-        <div
-          style={{
-            padding: "12px 16px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            borderBottom: "1px solid #F1F5F9",
-            flexShrink: 0,
-            gap: "8px",
-          }}
-        >
-          <button
-            onClick={onClose}
-            style={{
-              background: "none",
-              border: "none",
-              fontSize: "1.2rem",
-              color: "#0F172A",
-              cursor: "pointer",
-              flexShrink: 0,
-            }}
-          >
-            <i className="bi bi-arrow-left"></i>
-          </button>
-          <span
-            style={{
-              fontWeight: 800,
-              fontSize: "0.96rem",
-              flex: 1,
-              textAlign: "center",
-            }}
-          >
-            민원 상세
-          </span>
-          <div style={{ width: "20px", flexShrink: 0 }}></div>
-        </div>
+        <PageHeader title="민원 상세" onBack={onClose} />
 
         {/* 바디 */}
         <div

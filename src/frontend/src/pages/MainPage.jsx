@@ -24,9 +24,12 @@ export default function MainPage() {
   }, [refreshComplaints, refreshStats, isAdmin]);
 
   // 챗봇으로 새 민원 접수가 끝나면 목록을 갱신한다.
-  const handleChatClose = (submitted) => {
+  const handleChatClose = (result) => {
     setChatOpen(false);
-    if (submitted) {
+    if (result === "status") {
+      setTab("status");
+      refreshComplaints().catch(() => {});
+    } else if (result) {
       refreshComplaints().catch(() => {});
       if (isAdmin) refreshStats().catch(() => {});
     }
@@ -47,18 +50,19 @@ export default function MainPage() {
           />
         );
       case "status":
-        return <StatusPage />;
+        return <StatusPage onBack={() => setTab("home")} />;
       case "board":
         return (
           <BoardPage
             initialSelectedComplaintId={selectedComplaintId}
             onDetailClose={() => setSelectedComplaintId(null)}
+            onBack={() => setTab("home")}
           />
         );
       case "admin":
-        return <AdminPage />;
+        return <AdminPage onBack={() => setTab("home")} />;
       case "profile":
-        return <ProfilePage />;
+        return <ProfilePage onBack={() => setTab("home")} />;
       default:
         return <HomePage onOpenChat={() => setChatOpen(true)} />;
     }
@@ -76,16 +80,14 @@ export default function MainPage() {
     >
       {tab === "home" && <Header onProfileClick={() => setTab("profile")} />}
       <div
-        className="page-body"
+        key={tab}
+        className="page-body page-transition"
         style={
           tab === "profile" ||
           tab === "admin" ||
           tab === "board" ||
           tab === "status"
-            ? {
-                background: "#FFFFFF",
-                padding: tab === "profile" ? 0 : undefined,
-              }
+            ? { background: "#FFFFFF", padding: 0 }
             : {}
         }
       >

@@ -127,7 +127,7 @@ export default function AuthPage({ onBack, onLoginSuccess }) {
     <div className="auth-screen">
       <div className="auth-back-row">
         <button className="btn-icon" onClick={onBack}>
-          <i className="bi bi-arrow-left"></i>
+          <i className="bi bi-chevron-left"></i>
         </button>
       </div>
       <div className="auth-body">

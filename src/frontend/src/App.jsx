@@ -12,18 +12,29 @@ function AppRoot() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    getMe()
+    const minDelay = new Promise((r) => setTimeout(r, 800));
+    const auth = getMe()
       .then((me) => {
         if (me) setUser(me);
       })
-      .catch(() => {})
-      .finally(() => setChecking(false));
+      .catch(() => {});
+    Promise.all([minDelay, auth]).finally(() => setChecking(false));
   }, [setUser]);
 
   // 로그아웃(user → null)하면 로그인 화면에 머무르지 않고 랜딩으로 되돌린다.
   useEffect(() => {
     if (!user) setScreen("landing");
   }, [user]);
+
+  // 로딩 프레임 애니메이션 (run-1 ~ run-8)
+  const [runFrame, setRunFrame] = useState(1);
+  useEffect(() => {
+    if (!checking) return;
+    const timer = setInterval(() => {
+      setRunFrame((f) => (f % 8) + 1);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [checking]);
 
   if (checking)
     return (
@@ -35,17 +46,16 @@ function AppRoot() {
           alignItems: "center",
           justifyContent: "center",
           gap: "16px",
-          background: "#FFFFFF",
+          background: "transparent",
         }}
       >
         <img
-          src="/logo.png"
-          alt="다듬이 로고"
+          src={`/run-${runFrame}.png`}
+          alt="다듬이 달리는 중"
           style={{
-            width: "80px",
-            height: "80px",
+            width: "100px",
+            height: "100px",
             objectFit: "contain",
-            animation: "bounce 0.6s infinite alternate",
           }}
         />
         <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
@@ -75,11 +85,11 @@ function AppRoot() {
 export default function App() {
   return (
     <AppProvider>
-      <ToastProvider>
         <div className="app-frame">
-          <AppRoot />
+          <ToastProvider>
+            <AppRoot />
+          </ToastProvider>
         </div>
-      </ToastProvider>
     </AppProvider>
   );
 }

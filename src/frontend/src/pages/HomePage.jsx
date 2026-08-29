@@ -1,14 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useApp } from "../store/AppContext";
 import { formatDate } from "../store/constants";
 import "../styles/home.css";
 
 const locationPinPositions = {
-  "공학관 3층": { top: "30%", left: "28%" },
-  "학생회관 2층": { top: "60%", left: "52%" },
-  "중앙도서관 4층": { top: "42%", left: "68%" },
-  "본관 정문": { top: "74%", left: "38%" },
-  "공학관 5층": { top: "18%", left: "62%" },
+  "공학관 3층": { top: "18%", left: "75%" },
+  "학생회관 2층": { top: "55%", left: "55%" },
+  "중앙도서관 4층": { top: "45%", left: "48%" },
+  "본관 정문": { top: "85%", left: "48%" },
+  "공학관 5층": { top: "14%", left: "78%" },
 };
 
 const statusColors = {
@@ -26,6 +26,22 @@ export default function HomePage({ onOpenChat, onTabChange }) {
   const done = myList.filter((c) => c.status === "해결완료").length;
 
   const [hoveredPinId, setHoveredPinId] = useState(null);
+
+  // 지도 드래그 패닝
+  const [mapOffset, setMapOffset] = useState({ x: 0, y: 0 });
+  const dragRef = useRef({ dragging: false, startX: 0, startY: 0, startOffX: 0, startOffY: 0 });
+
+  const handleMapPointerDown = (e) => {
+    dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, startOffX: mapOffset.x, startOffY: mapOffset.y };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const handleMapPointerMove = (e) => {
+    if (!dragRef.current.dragging) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setMapOffset({ x: dragRef.current.startOffX + dx, y: dragRef.current.startOffY + dy });
+  };
+  const handleMapPointerUp = () => { dragRef.current.dragging = false; };
 
   // 화면에 뜨는 것은 전부 서버가 준 우리 학교 민원이다. 가짜로 채우지 않는다 —
   // 비어 있으면 "민원이 없다"가 사실이고, 데모를 섞으면 빈 게시판과 장애를 구분할 수 없다.
@@ -52,107 +68,71 @@ export default function HomePage({ onOpenChat, onTabChange }) {
 
   return (
     <div className="home-page">
-      <div className="greeting">
-        {user?.school_name && (
-          <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#64748B" }}>
-            {user.school_name}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+        <div className="greeting" style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#0F172A" }}>
+            안녕하세요, {user?.email?.split("@")[0] || "학생"}님
           </div>
-        )}
-        안녕하세요,
-        <span className="greeting-name">
-          {user?.email?.split("@")[0] || "학생"}님
-        </span>
+          {user?.school_name && (
+            <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#94A3B8" }}>
+              {user.school_name} 캠퍼스 민원 도우미
+            </div>
+          )}
+        </div>
+        <img
+          src="/dadumi-face-brave.png"
+          alt="다듬이"
+          style={{ width: "56px", height: "56px", objectFit: "contain", flexShrink: 0 }}
+        />
       </div>
 
-      <div className="input-trigger" onClick={onOpenChat}>
-        <span>불편한 점을 편하게 적어주세요</span>
-        <i
-          className="bi bi-arrow-right"
-          style={{ color: "#2563EB", fontWeight: 700 }}
-        ></i>
-      </div>
+      {!isAdmin && (
+        <div className="input-trigger" onClick={onOpenChat}>
+          <span>불편한 점을 편하게 적어주세요</span>
+          <i
+            className="bi bi-arrow-right"
+            style={{ color: "#2563EB", fontWeight: 700 }}
+          ></i>
+        </div>
+      )}
 
-      {/* 한국대 캠퍼스 지도 */}
+      {/* 캠퍼스 지도 */}
       <div
         style={{
           width: "100%",
           height: "200px",
           borderRadius: "14px",
-          background: "linear-gradient(180deg, #E0F2FE 0%, #E2E8F0 100%)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
           position: "relative",
           overflow: "hidden",
-          border: "1px solid rgba(37, 99, 235, 0.08)",
+          border: "1px solid rgba(226, 232, 240, 0.6)",
+          cursor: "grab",
+          touchAction: "none",
         }}
+        onPointerDown={handleMapPointerDown}
+        onPointerMove={handleMapPointerMove}
+        onPointerUp={handleMapPointerUp}
+        onPointerCancel={handleMapPointerUp}
       >
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "radial-gradient(circle at 25% 30%, rgba(59,130,246,0.10), transparent 24%), radial-gradient(circle at 65% 52%, rgba(16,185,129,0.14), transparent 28%), linear-gradient(90deg, rgba(148,163,184,0.10) 0, rgba(148,163,184,0.10) 1px, transparent 1px), linear-gradient(rgba(148,163,184,0.10) 0, rgba(148,163,184,0.10) 1px, transparent 1px)",
-            backgroundSize: "100% 100%, 100% 100%, 24px 24px, 24px 24px",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "14%",
-            top: "34%",
-            width: "72%",
-            height: "46%",
-            border: "2px solid rgba(37,99,235,0.25)",
-            borderRadius: "24px",
-            background: "rgba(255,255,255,0.28)",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "25%",
-            top: "48%",
-            width: "15%",
-            height: "18%",
-            borderRadius: "18px",
-            background: "rgba(148,163,184,0.18)",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "56%",
-            top: "26%",
-            width: "19%",
-            height: "22%",
-            borderRadius: "18px",
-            background: "rgba(148,163,184,0.18)",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "46%",
-            top: "62%",
-            width: "18%",
-            height: "16%",
-            borderRadius: "18px",
-            background: "rgba(148,163,184,0.18)",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "12%",
-            top: "18%",
-            fontSize: "0.72rem",
-            fontWeight: 700,
-            color: "#1E3A8A",
-          }}
-        >
-          캠퍼스 지도
-        </div>
+        <div style={{
+          position: "absolute", inset: 0,
+          transform: `translate(${mapOffset.x}px, ${mapOffset.y}px)`,
+          transition: dragRef.current.dragging ? "none" : "transform 0.15s ease-out",
+        }}>
+          <img
+            src="/map.png"
+            alt="캠퍼스 지도"
+            style={{
+              position: "absolute",
+              width: "220%",
+              height: "220%",
+              objectFit: "cover",
+              objectPosition: "58% 42%",
+              top: "-60%",
+              left: "-60%",
+              pointerEvents: "none",
+              userSelect: "none",
+            }}
+          />
         {mapPins.map((pin) => {
           const isHovered = hoveredPinId === pin.id;
           return (
@@ -175,7 +155,8 @@ export default function HomePage({ onOpenChat, onTabChange }) {
               <button
                 type="button"
                 aria-label={pin.title}
-                onClick={() => onTabChange && onTabChange("board", pin.id)}
+                onClick={(e) => { e.stopPropagation(); onTabChange && onTabChange("board", pin.id); }}
+                onPointerDown={(e) => e.stopPropagation()}
                 onMouseEnter={() => setHoveredPinId(pin.id)}
                 onMouseLeave={() => setHoveredPinId(null)}
                 onFocus={() => setHoveredPinId(pin.id)}
@@ -206,7 +187,7 @@ export default function HomePage({ onOpenChat, onTabChange }) {
                   style={{
                     position: "absolute",
                     left: "50%",
-                    top: "calc(100% + 10px)",
+                    bottom: "calc(100% + 10px)",
                     transform: "translateX(-50%)",
                     whiteSpace: "nowrap",
                     background: "rgba(15,23,42,0.84)",
@@ -226,6 +207,7 @@ export default function HomePage({ onOpenChat, onTabChange }) {
             </div>
           );
         })}
+        </div>
       </div>
 
       {/* 민원 현황 카드 */}

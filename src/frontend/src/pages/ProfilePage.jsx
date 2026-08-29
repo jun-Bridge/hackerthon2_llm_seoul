@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { useToast } from '../components/common/Toast';
+import PageHeader from '../components/common/PageHeader';
 import { logout, submitAdminCode } from '../api/auth';
 
-export default function ProfilePage() {
+export default function ProfilePage({ onBack }) {
   const { user, setUser } = useApp();
   const { showToast } = useToast();
   const [adminCode, setAdminCode] = useState('');
@@ -41,8 +42,20 @@ export default function ProfilePage() {
   const value = { fontSize: '0.88rem', fontWeight: 700, color: '#0F172A' };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '20px 0' }}>
-      <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 16px' }}>프로필</h2>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minHeight: '100%', background: '#FFFFFF', paddingBottom: '88px' }}>
+      <PageHeader title="프로필" onBack={onBack} />
+
+      {/* 프로필 아바타 섹션 */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '20px 16px 12px' }}>
+        <div style={{ width: '80px', height: '80px', borderRadius: '50%', border: '2px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', overflow: 'hidden' }}>
+          <img src="/dadumi-face-brave.png" alt="프로필" style={{ width: '60px', height: '60px', objectFit: 'contain' }} />
+        </div>
+        <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0F172A' }}>{user?.email?.split('@')[0] || 'student'}</div>
+        <div style={{ fontSize: '0.85rem', color: '#64748B' }}>{user?.school_name || ''}</div>
+        <span style={{ padding: '4px 14px', borderRadius: '9999px', background: '#F1F5F9', fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
+          {isAdmin ? '교직원' : '학생'}
+        </span>
+      </div>
 
       {/* 계정 정보 — 값은 전부 GET /auth/me 응답(Me)에서 온다 */}
       <div style={{ margin: '0 16px', border: '1px solid #E2E8F0', borderRadius: '14px', overflow: 'hidden', background: '#FFFFFF' }}>

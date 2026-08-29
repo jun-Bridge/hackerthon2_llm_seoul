@@ -1,12 +1,11 @@
 .app-header {
-  padding: 14px 20px 10px;
+  height: 56px;
+  padding: 0 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.7);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  background: transparent;
 }
 .header-left {
   display: flex;
@@ -45,6 +44,8 @@
   justify-content: center;
   font-size: 1rem;
   cursor: pointer;
+  overflow: hidden;
+  padding: 0;
 }
 
 .bottom-nav {
@@ -72,7 +73,7 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-@media (min-width: 768px) {
+@media (min-width: 520px) {
   .bottom-nav {
     width: calc(100% - 12px);
     max-width: 410px;

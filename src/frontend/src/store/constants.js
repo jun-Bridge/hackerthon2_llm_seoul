@@ -34,11 +34,27 @@ export const STATUSES = [
 // 역할 (백엔드 role) — 'staff' 아님. 관리자는 'admin'.
 export const ROLE = { STUDENT: "student", ADMIN: "admin" };
 
-// created_at(ISO 8601) → "YYYY.MM.DD" 표시용
+// created_at(ISO 8601) → "오늘 HH:MM" / "어제" / "YYYY.MM.DD" 표시용
 export function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = today - target;
+
+  if (diff === 0) {
+    // 오늘
+    const h = d.getHours();
+    const m = String(d.getMinutes()).padStart(2, "0");
+    const ampm = h < 12 ? "오전" : "오후";
+    const hour = h % 12 || 12;
+    return `오늘 ${ampm} ${hour}:${m}`;
+  }
+  if (diff === 86400000) {
+    return "어제";
+  }
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())}`;
 }

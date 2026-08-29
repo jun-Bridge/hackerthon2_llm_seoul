@@ -12,11 +12,8 @@ export default function Header({ onProfileClick }) {
         <span className="header-brand">다듬이</span>
       </div>
       <div className="header-right">
-        <button className="header-icon-btn">
-          <i className="bi bi-bell"></i>
-        </button>
         <button className="header-avatar" onClick={onProfileClick}>
-          <i className="bi bi-person"></i>
+          <img src="/dadumi-face-brave.png" alt="프로필" style={{ width: "74%", height: "74%", objectFit: "contain" }} />
         </button>
       </div>
     </header>

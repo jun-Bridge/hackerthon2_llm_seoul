@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatDate } from '../store/constants';
-import ComplaintDetailModal from '../components/common/ComplaintDetailModal';
+import {
+  openComplaint, acceptComplaint, resolveComplaint, holdComplaint, rejectComplaint, addComment,
+} from '../api/admin';
+import AdminComplaintDetail from '../components/common/AdminComplaintDetail';
 import PageHeader from '../components/common/PageHeader';
 
-export default function AdminPage() {
+export default function AdminPage({ onBack }) {
   const { complaints, stats, refreshStats, replaceComplaint, removeComplaint } = useApp();
   const [selectedId, setSelectedId] = useState(null);
+  const [filter, setFilter] = useState("전체");
 
   // 통계는 백엔드 /admin/stats가 정본. 아직 못 받았으면 목록으로 임시 계산.
   const by = stats?.by_status || {};
@@ -16,19 +20,56 @@ export default function AdminPage() {
   const hold = (by['보류'] ?? complaints.filter(c => c.status === '보류').length)
              + (by['거절'] ?? complaints.filter(c => c.status === '거절').length);
 
-  // 행 클릭 = 상세 열기. '미확인→확인' 전이는 서버가 openComplaint(POST)에서 처리한다.
-  const handleOpen = (id) => setSelectedId(id);
+  // 행 클릭 = 상세 열기. '미확인→확인'은 openComplaint(POST)로 서버가 전이시킨다.
+  const handleOpen = async (id) => {
+    setSelectedId(id);
+    try {
+      const updated = await openComplaint(id);
+      replaceComplaint(updated);
+      refreshStats().catch(() => {});
+    } catch {
+      // 서버 없거나 이미 확인 상태면 무시
+    }
+  };
 
-  // 상세에서 상태가 바뀌면 목록의 그 행만 갈아끼우고 통계를 다시 받는다.
-  const handleChanged = (u) => {
-    if (u.__withdrawn) removeComplaint(u.id);
-    else replaceComplaint(u);
-    refreshStats().catch(() => {});
+  // 상태 전이 — 상태에 맞는 API 호출
+  const handleStatusChange = async (id, newStatus) => {
+    try {
+      let updated;
+      if (newStatus === "처리중") updated = await acceptComplaint(id);
+      else if (newStatus === "해결완료") updated = await resolveComplaint(id);
+      else if (newStatus === "보류") {
+        const reason = window.prompt("보류 사유를 입력하세요 (필수)");
+        if (!reason || !reason.trim()) return;
+        updated = await holdComplaint(id, reason.trim());
+      } else if (newStatus === "거절") {
+        const reason = window.prompt("거절 사유를 입력하세요 (필수)");
+        if (!reason || !reason.trim()) return;
+        updated = await rejectComplaint(id, reason.trim());
+      }
+      if (updated) {
+        replaceComplaint(updated);
+        refreshStats().catch(() => {});
+      }
+      setSelectedId(null);
+    } catch (e) {
+      alert(e?.message || "처리에 실패했습니다.");
+    }
+  };
+
+  // 코멘트 추가 — 실제 API
+  const handleAddComment = async (id, content) => {
+    try {
+      const updated = await addComment(id, content);
+      replaceComplaint(updated);
+    } catch (e) {
+      alert(e?.message || "코멘트 추가에 실패했습니다.");
+    }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', background: '#FFFFFF', margin: '-10px -16px -80px', paddingBottom: '80px' }}>
-      <PageHeader title="관리자 페이지" />
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%', background: '#FFFFFF', paddingBottom: '88px' }}>
+      <PageHeader title="관리자 페이지" onBack={onBack} />
       <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
       {/* 통계 */}
@@ -48,31 +89,67 @@ export default function AdminPage() {
 
       {/* 목록 */}
       <div>
-        <div style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '12px' }}>최근 민원 목록</div>
-        {complaints.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '3rem', color: '#94A3B8' }}>접수된 민원이 없습니다</div>
-        ) : complaints.map(c => (
-          <div key={c.id} onClick={() => handleOpen(c.id)} style={{ padding: '16px 2px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer' }}>
-            <span style={{ fontSize: '0.9rem', fontWeight: 800, color: '#CBD5E1', minWidth: '32px', textAlign: 'center' }}>{c.id}</span>
+        <div style={{ fontSize: '1rem', fontWeight: 800, marginBottom: '12px' }}>민원 목록</div>
+
+        {/* 상태 필터 */}
+        <div className="cat-chip-row" style={{ display: 'flex', gap: '6px', overflowX: 'auto', scrollbarWidth: 'none', marginBottom: '14px' }}>
+          {["전체", "미확인", "확인", "처리중", "해결완료", "보류", "거절"].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                padding: '7px 14px',
+                borderRadius: '9999px',
+                border: filter === f ? '1.5px solid #2563EB' : '1px solid #E2E8F0',
+                background: filter === f ? '#EFF6FF' : '#FFFFFF',
+                color: filter === f ? '#2563EB' : '#475569',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+
+        {(() => {
+          const filtered = filter === "전체" ? complaints : complaints.filter(c => c.status === filter);
+          return filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '3rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+            <img src="/dadumi-face-hmm.png" alt="다듬이" style={{ width: '72px', height: '72px', objectFit: 'contain', opacity: 0.9 }} />
+            <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#475569' }}>해당 상태의 민원이 없습니다</div>
+          </div>
+        ) : filtered.map(c => (
+          <div key={c.id} className="list-item-touch" onClick={() => handleOpen(c.id)} style={{ padding: '16px 2px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', gap: '14px', cursor: 'pointer' }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span className={`status-pill status-${c.status}`} style={{ alignSelf: 'flex-start', fontSize: '0.7rem' }}>{c.status}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: '9999px' }}>{c.category}</span>
+                <span className={`status-pill status-${c.status}`}>{c.status}</span>
+              </div>
               <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#0F172A' }}>{c.title}</span>
               <span style={{ fontSize: '0.78rem', color: '#94A3B8' }}>{c.location} · {formatDate(c.created_at)}</span>
             </div>
             <i className="bi bi-chevron-right" style={{ color: '#D1D5DB' }}></i>
           </div>
-        ))}
+        ));
+        })()}
       </div>
 
-      {/* 상세 모달 — 여는 순간 서버가 미확인→확인으로 전이시킨다 (POST open) */}
-      {selectedId != null && (
-        <ComplaintDetailModal
-          complaintId={selectedId}
-          isAdmin={true}
-          onClose={() => setSelectedId(null)}
-          onChanged={handleChanged}
-        />
-      )}
+      {/* 관리자 상세 */}
+      {selectedId != null && (() => {
+        const sel = complaints.find(c => c.id === selectedId);
+        return sel ? (
+          <AdminComplaintDetail
+            complaint={sel}
+            onClose={() => setSelectedId(null)}
+            onStatusChange={handleStatusChange}
+            onAddComment={handleAddComment}
+          />
+        ) : null;
+      })()}
       </div>
     </div>
   );

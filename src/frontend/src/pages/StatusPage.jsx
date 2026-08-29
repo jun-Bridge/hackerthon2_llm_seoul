@@ -5,7 +5,7 @@ import ComplaintDetail from "../components/common/ComplaintDetail";
 
 const FILTERS = ["전체", "처리중", "해결완료", "보류", "거절"];
 
-export default function StatusPage() {
+export default function StatusPage({ onBack }) {
   const { complaints } = useApp();
   // 데모 폴백 없음 — 목록이 비면 "민원이 없다"가 진실이다.
   const list = complaints;
@@ -32,11 +32,10 @@ export default function StatusPage() {
         flexDirection: "column",
         minHeight: "100%",
         background: "#FFFFFF",
-        margin: "-10px -16px -80px",
-        paddingBottom: "80px",
+        paddingBottom: "88px",
       }}
     >
-      <PageHeader title="내 민원 현황" />
+      <PageHeader title="내 민원 현황" onBack={onBack} />
 
       <div
         style={{
@@ -101,14 +100,17 @@ export default function StatusPage() {
         <div>
           {filtered.length === 0 ? (
             <div
-              style={{ textAlign: "center", padding: "3rem", color: "#94A3B8" }}
+              style={{ textAlign: "center", padding: "3rem 1rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}
             >
-              접수한 민원이 없습니다
+              <img src="/dadumi-face-hmm.png" alt="다듬이" style={{ width: "72px", height: "72px", objectFit: "contain", opacity: 0.9 }} />
+              <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#475569" }}>아직 접수한 민원이 없어요</div>
+              <div style={{ fontSize: "0.8rem", color: "#94A3B8" }}>불편한 점을 챗봇으로 접수해보세요</div>
             </div>
           ) : (
             filtered.map((c) => (
               <div
                 key={c.id}
+                className="list-item-touch"
                 onClick={() => setSelectedId(c.id)}
                 style={{
                   padding: "16px 4px",

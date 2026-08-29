@@ -1,10 +1,10 @@
-// 서브 페이지 헤더 (← + 중앙 타이틀)
+// 서브 페이지 헤더 (← + 중앙 타이틀). 스크롤 시 상단 고정.
 export default function PageHeader({ title, onBack }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '14px 16px', borderBottom: '1px solid #F1F5F9',
-      background: '#FFFFFF', position: 'relative', flexShrink: 0
+      height: '56px', padding: '0 16px', borderBottom: '1px solid #F1F5F9',
+      background: '#FFFFFF', position: 'sticky', top: 0, zIndex: 20, flexShrink: 0
     }}>
       {onBack && (
         <button onClick={onBack} style={{

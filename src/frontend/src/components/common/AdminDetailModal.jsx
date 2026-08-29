@@ -109,7 +109,7 @@ export default function AdminDetailModal({ complaint, onClose }) {
               flexShrink: 0,
             }}
           >
-            <i className="bi bi-arrow-left"></i>
+            <i className="bi bi-chevron-left"></i>
           </button>
           <span
             style={{

@@ -10,6 +10,15 @@ import { ApiError } from "../../api/client";
 
 const MASCOT_IMAGE = "/cheer.png";
 
+// personaStage에 따른 캐릭터 이미지
+const PERSONA_IMAGES = {
+  idle: "/cheer.png",
+  listening: "/typing.png",
+  writing: "/write.png",
+  summary: "/cheer.png",
+  success: "/heart.png",
+};
+
 export default function ChatModal({ onClose }) {
   const { showToast } = useToast();
   const [messages, setMessages] = useState([
@@ -40,7 +49,7 @@ export default function ChatModal({ onClose }) {
     scrollRef.current?.scrollTo(0, 99999);
   }, [messages, isTyping, showConfirmCard]);
 
-  // 세션은 열 때 한 번 만든다. 이후 모든 발화가 이 세션에 쌓이고, 접수도 이걸로 한다.
+  // 세션은 열 때 한 번 만든다. 백엔드 없으면 로컬 모의 모드로 전환 (디자인 확인용).
   useEffect(() => {
     createSession()
       .then((r) => setSessionId(r.session_id))
@@ -81,7 +90,7 @@ export default function ChatModal({ onClose }) {
 
     setMessages((prev) => [
       ...prev,
-      { sender: "user", text: text || "(사진 첨부)", chips: [], image: image || null },
+      { sender: "user", text: text || "", chips: [], image: image || null },
     ]);
     setInput("");
     setPendingImage(null);
@@ -188,7 +197,8 @@ export default function ChatModal({ onClose }) {
       style={{
         position: "absolute",
         inset: 0,
-        background: "#FFF",
+        background:
+          "linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%)",
         zIndex: 200,
         display: "flex",
         flexDirection: "column",
@@ -196,74 +206,58 @@ export default function ChatModal({ onClose }) {
     >
       <div
         style={{
+          height: "56px",
+          padding: "0 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "transparent",
           flexShrink: 0,
-          background:
-            "linear-gradient(180deg, rgba(226,233,255,0.96) 0%, rgba(234,239,255,0.94) 25%, rgba(245,247,252,0.96) 100%)",
-          borderBottom: "1px solid rgba(148, 163, 184, 0.22)",
+          position: "relative",
         }}
       >
-        <div
+        <button
+          onClick={() => onClose(false)}
+          aria-label="뒤로 가기"
           style={{
+            position: "absolute",
+            left: "16px",
+            background: "none",
+            border: "none",
+            color: "#0F172A",
+            fontSize: "1.2rem",
+            cursor: "pointer",
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            padding: "10px 18px 12px",
           }}
         >
-          <button
-            onClick={() => onClose(false)}
-            aria-label="뒤로 가기"
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "#0F172A",
-              fontSize: "2rem",
-              lineHeight: 1,
-              cursor: "pointer",
-              padding: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: "30px",
-              height: "30px",
-            }}
-          >
-            ‹
-          </button>
+          <i className="bi bi-chevron-left"></i>
+        </button>
 
-          <div
-            style={{
-              fontSize: "1.1rem",
-              fontWeight: 700,
-              color: "#0F172A",
-              letterSpacing: "-0.03em",
-            }}
-          >
-            새 민원 접수
-          </div>
+        <span style={{ fontSize: "1rem", fontWeight: 800, color: "#0F172A" }}>
+          새 민원 접수
+        </span>
 
-          <button
-            onClick={handleReset}
-            style={{
-              border: "1px solid rgba(148, 163, 184, 0.35)",
-              background: "rgba(255,255,255,0.48)",
-              color: "#0F172A",
-              borderRadius: "999px",
-              height: "34px",
-              padding: "0 14px",
-              fontSize: "0.92rem",
-              fontWeight: 600,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
-            }}
-          >
-            <span style={{ fontSize: "0.88rem" }}>⟳</span>
-            초기화
-          </button>
-        </div>
+        <button
+          onClick={handleReset}
+          aria-label="초기화"
+          style={{
+            position: "absolute",
+            right: "16px",
+            background: "none",
+            border: "none",
+            color: "#64748B",
+            fontSize: "0.82rem",
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+          }}
+        >
+          <i className="bi bi-arrow-clockwise"></i>
+          초기화
+        </button>
       </div>
 
       {/* 메시지 */}
@@ -273,54 +267,40 @@ export default function ChatModal({ onClose }) {
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "16px",
+          padding: "8px 16px 16px",
           display: "flex",
           flexDirection: "column",
           gap: "12px",
-          background:
-            "linear-gradient(180deg, #BFDBFE 0%, #DBEAFE 15%, #EFF6FF 32%, #F8FAFC 52%, #FFFFFF 100%)",
+          background: "transparent",
         }}
       >
-        {messages.map((m, i) => (
+        {messages.map((m, i) => {
+          // 마지막 봇 메시지인지 확인
+          const isLastBot = m.sender === "bot" && !messages.slice(i + 1).some(msg => msg.sender === "bot");
+          return (
           <div key={i}>
             {m.sender === "bot" ? (
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "flex-start",
-                  gap: "8px",
-                  alignItems: "flex-end",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: "4px",
                 }}
               >
-                <div
-                  style={{
-                    width: "28px",
-                    height: "28px",
-                    borderRadius: "50%",
-                    background:
-                      "linear-gradient(180deg, #EFF6FF 0%, #DBEAFE 100%)",
-                    border: "1px solid rgba(147, 197, 253, 0.7)",
-                    overflow: "hidden",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                    boxShadow: "0 8px 18px rgba(37, 99, 235, 0.12)",
-                  }}
-                >
-                  <img
-                    src={MASCOT_IMAGE}
-                    alt="다듬이"
-                    style={{
-                      width: "18px",
-                      height: "18px",
-                      objectFit: "contain",
-                    }}
-                  />
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  {isLastBot && (
+                    <img
+                      src={PERSONA_IMAGES[personaStage] || MASCOT_IMAGE}
+                      alt="다듬이"
+                      style={{ width: "32px", height: "32px", objectFit: "contain", transition: "all 0.3s ease" }}
+                    />
+                  )}
+                  <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "#64748B" }}>다듬이</span>
                 </div>
                 <div
                   style={{
-                    maxWidth: "75%",
+                    maxWidth: "80%",
                     padding: "10px 14px",
                     borderRadius: "14px",
                     background: "#FFFFFF",
@@ -339,7 +319,7 @@ export default function ChatModal({ onClose }) {
                       style={{
                         width: "100%",
                         maxWidth: "180px",
-                        borderRadius: "8px",
+                        borderRadius: "12px",
                         marginBottom: m.text ? "6px" : "0",
                       }}
                     />
@@ -357,14 +337,10 @@ export default function ChatModal({ onClose }) {
                 <div
                   style={{
                     maxWidth: "75%",
-                    padding: "10px 14px",
-                    borderRadius: "14px",
-                    background: "#2563EB",
-                    color: "#FFF",
-                    borderTopRightRadius: "4px",
-                    fontSize: "0.88rem",
-                    lineHeight: "1.55",
-                    whiteSpace: "pre-wrap",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    gap: "6px",
                   }}
                 >
                   {m.image && (
@@ -374,19 +350,34 @@ export default function ChatModal({ onClose }) {
                       style={{
                         width: "100%",
                         maxWidth: "180px",
-                        borderRadius: "8px",
-                        marginBottom: m.text ? "6px" : "0",
+                        borderRadius: "12px",
+                        display: "block",
                       }}
                     />
                   )}
-                  {m.text}
+                  {m.text && (
+                    <div
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: "14px",
+                        background: "#2563EB",
+                        color: "#FFF",
+                        borderTopRightRadius: "4px",
+                        fontSize: "0.88rem",
+                        lineHeight: "1.55",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {m.text}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
             {m.sender === "bot" && m.chips && m.chips.length > 0 && (
               <div
                 className="chip-row"
-                style={{ marginTop: "6px", marginLeft: "36px" }}
+                style={{ marginTop: "6px" }}
               >
                 {m.chips.map((c, j) => (
                   <button
@@ -400,129 +391,98 @@ export default function ChatModal({ onClose }) {
               </div>
             )}
           </div>
-        ))}
+        )})}
 
         {/* 타이핑 */}
         {isTyping && (
-          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <img
+              src={PERSONA_IMAGES["writing"]}
+              alt="다듬이"
+              style={{ width: "32px", height: "32px", objectFit: "contain" }}
+            />
             <div
               style={{
                 padding: "10px 14px",
                 borderRadius: "14px",
                 background: "#FFF",
                 border: "1px solid #E2E8F0",
+                fontSize: "0.82rem",
+                color: "#64748B",
+                fontWeight: 600,
               }}
             >
-              <div className="typing-dots">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
+              다듬이가 작성하는 중…
             </div>
           </div>
         )}
 
-        {/* 요약 확인 문구를 채팅 말풍선으로 붙여서 나오게 */}
+        {/* 요약 카드 */}
         {showConfirmCard && (
           <div
             style={{
-              display: "flex",
-              justifyContent: "flex-start",
-              gap: "8px",
-              alignItems: "flex-end",
+              width: "100%",
+              padding: "16px",
+              borderRadius: "16px",
+              background: "#FFFFFF",
+              border: "1px solid #E2E8F0",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
             }}
           >
-            <div
+            <div style={{ fontSize: "0.92rem", fontWeight: 800, color: "#0F172A", marginBottom: "14px" }}>
+              민원 내용 요약
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <i className="bi bi-thermometer-half" style={{ color: "#2563EB", fontSize: "0.9rem" }}></i>
+                  <span style={{ fontSize: "0.8rem", color: "#64748B", fontWeight: 600 }}>카테고리</span>
+                </div>
+                <span style={{ fontSize: "0.84rem", color: "#2563EB", fontWeight: 700 }}>{chatData.category || "미입력"}</span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <i className="bi bi-geo-alt-fill" style={{ color: "#2563EB", fontSize: "0.9rem" }}></i>
+                  <span style={{ fontSize: "0.8rem", color: "#64748B", fontWeight: 600 }}>위치</span>
+                </div>
+                <span style={{ fontSize: "0.84rem", color: "#0F172A", fontWeight: 600 }}>{chatData.location || "미입력"}</span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                  <i className="bi bi-file-earmark-text-fill" style={{ color: "#2563EB", fontSize: "0.9rem" }}></i>
+                  <span style={{ fontSize: "0.8rem", color: "#64748B", fontWeight: 600 }}>내용 요약</span>
+                </div>
+                <span style={{ fontSize: "0.84rem", color: "#0F172A", fontWeight: 500, lineHeight: 1.5, textAlign: "right" }}>{chatData.detail || "미입력"}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={handleSubmit}
               style={{
-                width: "28px",
-                height: "28px",
-                borderRadius: "50%",
-                background: "linear-gradient(180deg, #EFF6FF 0%, #DBEAFE 100%)",
-                border: "1px solid rgba(147, 197, 253, 0.7)",
-                overflow: "hidden",
+                width: "100%",
+                height: "40px",
+                marginTop: "14px",
+                borderRadius: "10px",
+                background: "#4F6EF7",
+                color: "#FFF",
+                fontSize: "0.88rem",
+                fontWeight: 700,
+                border: "none",
+                cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                flexShrink: 0,
+                gap: "4px",
               }}
             >
-              <img
-                src={MASCOT_IMAGE}
-                alt="다듬이"
-                style={{ width: "18px", height: "18px", objectFit: "contain" }}
-              />
-            </div>
-            <div
-              style={{
-                maxWidth: "82%",
-                padding: "12px 14px",
-                borderRadius: "14px",
-                background: "#FFFFFF",
-                border: "1px solid #E2E8F0",
-                borderTopLeftRadius: "4px",
-                fontSize: "0.86rem",
-                lineHeight: "1.65",
-                color: "#0F172A",
-              }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: "8px" }}>
-                네, 내용을 정리했어요. 아래 내용으로 접수할까요?
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "4px",
-                  color: "#475569",
-                }}
-              >
-                <div>• 카테고리: {chatData.category || "미입력"}</div>
-                <div>• 위치: {chatData.location || "미입력"}</div>
-                <div>• 내용: {chatData.detail || "미입력"}</div>
-              </div>
-              <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-                <button
-                  onClick={handleSubmit}
-                  style={{
-                    flex: 1,
-                    height: "36px",
-                    borderRadius: "10px",
-                    background: "#2563EB",
-                    color: "#FFF",
-                    fontSize: "0.82rem",
-                    fontWeight: 700,
-                    border: "none",
-                    cursor: "pointer",
-                  }}
-                >
-                  접수하기
-                </button>
-                <button
-                  onClick={handleGoBack}
-                  style={{
-                    flex: 1,
-                    height: "36px",
-                    borderRadius: "10px",
-                    background: "#F8FAFC",
-                    color: "#475569",
-                    fontSize: "0.82rem",
-                    fontWeight: 700,
-                    border: "1px solid #E2E8F0",
-                    cursor: "pointer",
-                  }}
-                >
-                  수정하기
-                </button>
-              </div>
-            </div>
+              민원 접수하기 →
+            </button>
           </div>
         )}
 
-        {isTyping && (
-          <div style={{ alignSelf: "flex-start", color: "#94A3B8", fontSize: "0.82rem" }}>
-            AI가 작성 중…
-          </div>
-        )}
       </div>
 
       {/* 첨부 대기 중인 사진 미리보기 */}
@@ -639,15 +599,16 @@ export default function ChatModal({ onClose }) {
             width: "38px",
             height: "38px",
             borderRadius: "50%",
-            background: "#2563EB",
+            background: (!input.trim() && !pendingImage) ? "#CBD5E1" : "#2563EB",
             color: "#fff",
             border: "none",
-            cursor: "pointer",
+            cursor: (!input.trim() && !pendingImage) ? "default" : "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             fontSize: "1rem",
             flexShrink: 0,
+            transition: "background 0.2s ease",
           }}
         >
           <i className="bi bi-send-fill"></i>
@@ -660,6 +621,10 @@ export default function ChatModal({ onClose }) {
           onConfirm={() => {
             setShowSuccessModal(false);
             onClose(true);
+          }}
+          onGoStatus={() => {
+            setShowSuccessModal(false);
+            onClose("status");
           }}
         />
       )}
